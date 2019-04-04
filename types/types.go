@@ -4,14 +4,19 @@
 // REST requests and respones.
 package types
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+	"unicode"
+)
 
 var (
-	// Regular expression to validate a produce code.  Note p{L} matches
-	/// all Unicode alphas and p{N} all numerics.
-	codeExp = regexp.MustCompile(`^([\p{L}\p{N}]{4}-){3}[\p{L}\p{N}]{4}$`)
+	// Regular expression to validate a produce code, which is 4 sets of
+	// hyphen-separated quartets of alphanumerics.
+	codeExp = regexp.MustCompile(`^([A-Za-z0-9]{4}-){3}([A-Za-z0-9]){4}$`)
 
-	// Regular expression to match produce name: alphanumerics plus white space
+	// Regular expression to match produce name: (Unicode) alphanumerics
+	// plus white space.
 	nameExp = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}\s]*$`)
 )
 
@@ -45,4 +50,42 @@ type ProduceAddItemResponse struct {
 // that operation.
 type ProduceAddResponse struct {
 	Items []ProduceAddItemResponse `json:"items"`
+}
+
+// StatusResponse is the JSON returned for a liveness check.
+type StatusResponse struct {
+	Status string `json:"status"`
+}
+
+// ValidateAndConvertProduceCode returns whether the produce code is
+// syntactically valid and if so, puts it in canoncial for (upper case).
+func ValidateAndConvertProduceCode(code string) (string, bool) {
+	if !codeExp.Match([]byte(code)) {
+		return "", false
+	}
+	return strings.ToUpper(code), true
+}
+
+// ValidateAndConvertName returns whether the produce name is
+// syntactically valid and if so, puts it in canoncial form.  For
+// names, the canonical form is leading characters capitalized.  Also
+// note, the leading character cannot bne a space, but internal characters
+// may be white space.
+func ValidateAndConvertName(code string) (string, bool) {
+	if !nameExp.Match([]byte(code)) {
+		return "", false
+	}
+
+	var prev = ' '
+	runes := []rune(code)
+	var res []rune
+	for _, v := range runes {
+		if unicode.IsSpace(prev) {
+			res = append(res, unicode.ToUpper(v))
+		} else {
+			res = append(res, unicode.ToLower(v))
+		}
+		prev = v
+	}
+	return string(res), true
 }
