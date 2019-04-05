@@ -9,20 +9,20 @@ import (
 
 var (
 	dfltProduce = types.Produce{
-		ProduceCode: "A12T-4GH7-QPL9-3N4M",
-		Name:        "Lettuce",
-		UnitPrice:   types.USD(346),
+		Code:      "A12T-4GH7-QPL9-3N4M",
+		Name:      "Lettuce",
+		UnitPrice: types.USD(346),
 	}
 
 	secondProduce = types.Produce{
-		ProduceCode: "YRT6-72AS-K736-L4AR",
-		Name:        "Green Pepper",
-		UnitPrice:   types.USD(79),
+		Code:      "YRT6-72AS-K736-L4AR",
+		Name:      "Green Pepper",
+		UnitPrice: types.USD(79),
 	}
 )
 
 func TestAdd(t *testing.T) {
-	var store ProduceStore = NewLockingProduceStore()
+	var store = New()
 	err := store.Add(context.Background(), dfltProduce)
 	if err != nil {
 		t.Fatalf("error adding produce: %v", err)
@@ -32,7 +32,7 @@ func TestAdd(t *testing.T) {
 		t.Fatalf("unexpected store count: %d", len(lps.store))
 	}
 
-	prod := lps.store[dfltProduce.ProduceCode]
+	prod := lps.store[dfltProduce.Code]
 	if prod == nil || *prod != dfltProduce {
 		t.Fatalf("expected produce not found")
 	}
@@ -55,17 +55,17 @@ func TestAdd(t *testing.T) {
 	if len(lps.store) != 2 {
 		t.Fatalf("unexpected store count: %d", len(lps.store))
 	}
-	prod = lps.store[secondProduce.ProduceCode]
+	prod = lps.store[secondProduce.Code]
 	if prod == nil || *prod != secondProduce {
 		t.Fatalf("expected produce not found")
 	}
 }
 
 func TestDelete(t *testing.T) {
-	var store ProduceStore = NewLockingProduceStore()
+	var store = New()
 
 	// First test for error when store is empty
-	err := store.Delete(context.Background(), dfltProduce.ProduceCode)
+	err := store.Delete(context.Background(), dfltProduce.Code)
 	if err == nil {
 		t.Fatalf("did not get expected error")
 	}
@@ -75,8 +75,8 @@ func TestDelete(t *testing.T) {
 	}
 
 	var lps = store.(*LockingProduceStore)
-	lps.store[dfltProduce.ProduceCode] = &dfltProduce
-	err = store.Delete(context.Background(), dfltProduce.ProduceCode)
+	lps.store[dfltProduce.Code] = &dfltProduce
+	err = store.Delete(context.Background(), dfltProduce.Code)
 	if err != nil {
 		t.Fatalf("error deleting produce: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestListAll(t *testing.T) {
-	var store ProduceStore = NewLockingProduceStore()
+	var store = New()
 
 	// Test empty list
 	res, err := store.ListAll(context.Background())
@@ -98,8 +98,8 @@ func TestListAll(t *testing.T) {
 	}
 
 	var lps = store.(*LockingProduceStore)
-	lps.store[dfltProduce.ProduceCode] = &dfltProduce
-	lps.store[secondProduce.ProduceCode] = &secondProduce
+	lps.store[dfltProduce.Code] = &dfltProduce
+	lps.store[secondProduce.Code] = &secondProduce
 	res, err = store.ListAll(context.Background())
 	if err != nil {
 		t.Fatalf("error adding produce: %v", err)
@@ -114,7 +114,7 @@ func TestListAll(t *testing.T) {
 }
 
 func TestClear(t *testing.T) {
-	var store ProduceStore = NewLockingProduceStore()
+	var store = New()
 
 	// Test clear of empty store
 	err := store.Clear(context.Background())
@@ -128,7 +128,7 @@ func TestClear(t *testing.T) {
 	}
 
 	// Test clear of non-empty store
-	lps.store[dfltProduce.ProduceCode] = &dfltProduce
+	lps.store[dfltProduce.Code] = &dfltProduce
 	err = store.Clear(context.Background())
 	if err != nil {
 		t.Fatalf("error clearing store: %v", err)

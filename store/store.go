@@ -1,8 +1,8 @@
 // Package store defines an interface and implementation for performing
-// the produce operations: add item, delete item, list all items.  Note,
-// even though the external API allows for multiple adds in a single request,
-// they are processed individually as per the spec, so the API only needs
-// to handle single adds.
+// the produce storage operations: add item, delete item, list all items.
+// Note, even though the external API allows for multiple adds in a single
+// request, they are processed individually as per the spec, so the store API
+// only needsto handle single adds.
 package store
 
 import (
@@ -12,8 +12,8 @@ import (
 	"github.com/gdotgordon/produce-demo/types"
 )
 
-// ProduceStore is the interface for produce item management.  The use
-// of an interface allows us to conveniently mock the storage in tests.
+// ProduceStore is the interface for produce item storage and retrieval.
+// The use of an interface allows us to conveniently mock the storage in tests.
 type ProduceStore interface {
 
 	// Add adds a single produce item to the store or returns an error
@@ -49,9 +49,9 @@ type LockingProduceStore struct {
 	lock sync.RWMutex
 }
 
-// NewLockingProduceStore creates an initialized instance of a
-// concrete produce store.
-func NewLockingProduceStore() *LockingProduceStore {
+// New creates an initialized instance of a concrete produce store.  We hide
+// the implementation under an interface, so we can easily swap in a new one.
+func New() ProduceStore {
 	ps := LockingProduceStore{store: make(map[string]*types.Produce)}
 	return &ps
 }
@@ -63,11 +63,11 @@ func (lps *LockingProduceStore) Add(ctx context.Context,
 	lps.lock.Lock()
 	defer lps.lock.Unlock()
 
-	_, ok := lps.store[prod.ProduceCode]
+	_, ok := lps.store[prod.Code]
 	if ok {
-		return AlreadyExistsError{code: prod.ProduceCode}
+		return AlreadyExistsError{Code: prod.Code}
 	}
-	lps.store[prod.ProduceCode] = &prod
+	lps.store[prod.Code] = &prod
 	return nil
 }
 
@@ -80,7 +80,7 @@ func (lps *LockingProduceStore) Delete(ctx context.Context,
 
 	_, ok := lps.store[code]
 	if !ok {
-		return NotFoundError{code: code}
+		return NotFoundError{Code: code}
 	}
 
 	delete(lps.store, code)
