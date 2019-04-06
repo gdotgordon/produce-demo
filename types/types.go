@@ -5,6 +5,8 @@
 package types
 
 import (
+	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -97,4 +99,31 @@ func ValidateAndConvertName(code string) (string, bool) {
 		prev = v
 	}
 	return string(res), true
+}
+
+// ValidateAndConvertProduce validates that the code and name comform
+// to the grammar, and also canonicalize them as per the specified rules.
+func ValidateAndConvertProduce(item *Produce) string {
+	// The custom unmarshal of the USD field already validated it, but
+	// we must manually validate the other two fields and convert
+	// the to canonical format (upper case).
+	var problems bytes.Buffer
+	str, val := ValidateAndConvertProduceCode(item.Code)
+	if !val {
+		if problems.Len() != 0 {
+			problems.WriteString(", ")
+		}
+		problems.WriteString(fmt.Sprintf("invalid code: '%s'", item.Code))
+	}
+	item.Code = str
+
+	str, val = ValidateAndConvertName(item.Name)
+	if !val {
+		if problems.Len() != 0 {
+			problems.WriteString(", ")
+		}
+		problems.WriteString(fmt.Sprintf("invalid name: '%s'", item.Name))
+	}
+	item.Name = str
+	return problems.String()
 }

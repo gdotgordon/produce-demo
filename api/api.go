@@ -1,8 +1,8 @@
 // Package api is the endpoint implementation for the produce service.
 // The HTTP endpoint implmentations are here.  This package deals with
 // unmarshaling and marshaling payloads, dispatching to the service (which is
-// simply the store), processing those errors, and implementing proper
-// REST semantics.
+// itself contains an instance of the storee), processing those errors,
+// and implementing proper REST semantics.
 package api
 
 import (
@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +18,14 @@ import (
 	"github.com/gdotgordon/produce-demo/service"
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
+)
+
+// The staus URL is a liveness check, and the produce endpoint is the
+
+// Definitions for the supported URLs.
+const (
+	statusURL  = "/v1/status"
+	produceURL = "/v1/produce"
 )
 
 // API is the item that dispatches to the endpoint implmentations
@@ -29,12 +38,13 @@ type apiImpl struct {
 // the passed-in muxer.
 func Init(ctx context.Context, mux *http.ServeMux, service service.Service) error {
 	ap := apiImpl{service: service}
-	mux.Handle("/v1/status", wrapContext(ctx, ap.getStatus))
-	mux.Handle("/v1/produce", wrapContext(ctx, ap.handleProduce))
+	mux.Handle(statusURL, wrapContext(ctx, ap.getStatus))
+	mux.Handle(produceURL, wrapContext(ctx, ap.handleProduce))
+	mux.Handle(produceURL+"/", wrapContext(ctx, ap.handleProduce))
 	return nil
 }
 
-// Liveness check
+// Liveness check endpoint
 func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -57,46 +67,56 @@ func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-// Handle all produce endpoints
+// Handle all produce endpoints.  Due to the restriction of not using
+// a third-partry muxer, we need to manually work with the dispatch
+// of the "v1/produce" endpoint.
 func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
-
-	// This wouldn't be necessary if using a high-quality muxer such
-	// as Gorilla mux.
+	log.Printf("Method is '%s'\n", r.Method)
 	switch r.Method {
 	case http.MethodPost:
+		log.Println("Go here!")
 		a.handleAdd(w, r)
 	case http.MethodGet:
 		a.handleGet(w, r)
 	case http.MethodDelete:
 		a.handleDelete(w, r)
 	default:
-		defer r.Body.Close()
+		if r.Body != nil {
+			r.Body.Close()
+		}
 		http.NotFound(w, r)
 		return
 	}
 }
 
+// Handler for POST/add new produce.  We are asked to add mutliple items
+// at once, but not all of them may succeed.  On the other hand, there
+// is no requirement or rationale for transactionality, so we may end up
+// with partial successes when there are multpile items to add.
+//
+// We handle the case of partial success by sending an HTTP 200 and returning
+// a json list of the individual results.  Since this API is arguably not
+// purely Restful, it is a topic where ten different resources propose ten
+// different ways of doing it, so I picked a reasonable one that somewhat
+// stays within REST semantics.
 func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
-	if r.Body != nil {
-		defer r.Body.Close()
-	}
-
-	// Again, all of this extra URL processing is due to using the
-	// standard Go muxer.
-	path := r.URL.EscapedPath()
-	path, err := url.PathUnescape(path)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("URL unescape error"))
-		return
-	}
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 {
+	if r.Body == nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	// Unmarshal the request item.
+	defer r.Body.Close()
+
+	log.Printf("handling POST request")
+
+	// Ensure the URL path is exactly the produce base URL.
+	_, ok := extractPath(w, r, produceURL)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Unmarshal the request item.  Note adding 0 items is deemed an error.
 	var par types.ProduceAddRequest
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -112,36 +132,6 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i, v := range par.Items {
-		str, val := types.ValidateAndConvertProduceCode(v.Code)
-		if !val {
-			msg := fmt.Sprintf("invalid code: '%s'", v.Code)
-			status := types.StatusResponse{Status: msg}
-			b, err := json.MarshalIndent(status, "", "  ")
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(b)
-			return
-		}
-		par.Items[i].Code = str
-
-		str, val = types.ValidateAndConvertName(v.Name)
-		if !val {
-			msg := fmt.Sprintf("invalid name: '%s'", v.Code)
-			status := types.StatusResponse{Status: msg}
-			b, err := json.MarshalIndent(status, "", "  ")
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(b)
-			return
-		}
-		par.Items[i].Name = str
-	}
-
 	// Invoke the service to do the add
 	addRes, err := a.service.Add(r.Context(), par.Items)
 	if err != nil {
@@ -149,71 +139,60 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If there was only one item to add, handle that without the mass response.
+	if len(par.Items) == 1 {
+		if addRes[0].Err == nil {
+			w.WriteHeader(http.StatusCreated)
+		} else {
+			w.WriteHeader(errorToStatusCode(addRes[0].Err, http.StatusCreated))
+		}
+	}
 	// If there is more than one add, and at least one failure, we'll return
-	// HTTP 207 (multi-status) and return a JSON object with the results of each
-	// individual add.  If there is only one object or no failiures, we'll
-	// return HTTP 201 with no payload.
+	// HTTP 200 (multi-status) and return a JSON object with the results of each
+	// individual add.  If there are no failures, we'll return HTTP 201 with
+	// no payload.
 	restResp := make([]types.ProduceAddItemResponse, len(addRes))
 	failures := 0
 	for i, v := range addRes {
 		restResp[i].Code = v.Code
 		if v.Err != nil {
 			failures++
+			restResp[i].Error = v.Err.Error()
 		}
+		restResp[i].StatusCode = errorToStatusCode(v.Err, http.StatusCreated)
 	}
+	restWrapper := types.ProduceAddResponse{Items: restResp}
+
+	// If no failures, return a single created response.
 	if failures == 0 {
 		w.WriteHeader(http.StatusCreated)
 		return
 	}
 
-	// At least one failed, so we'll go with the HTTP 207 and show
-	for i, v := range addRes {
-		restResp[i].Code = v.Code
-		if v.Err != nil {
-			restResp[i].Error = v.Err.Error()
-		}
-		switch v.Err.(type) {
-		case service.InternalError:
-			restResp[i].StatusCode = http.StatusInternalServerError
-		case store.AlreadyExistsError:
-			restResp[i].StatusCode = http.StatusConflict
-		case nil:
-			// Add was successfiul
-			restResp[i].StatusCode = http.StatusNoContent
-		default:
-			restResp[i].StatusCode = http.StatusInternalServerError
-		}
-	}
-
-	// We're going to return HTTP 207 along with the descritpive JSON.
-	b, err = json.Marshal(par)
+	// At least one failuire, so we're going to return HTTP 200 along with
+	// the descritpive JSON.
+	b, err = json.Marshal(restWrapper)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusMultiStatus)
+	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Write(b)
 }
 
+// The Get Rest handler simply lists all the items in the database.
+// It is valid and meaningful to return an empty array.
 func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		defer r.Body.Close()
 	}
 
-	// The last part of the request URL should have the ID to delete.
-	path := r.URL.EscapedPath()
-	path, err := url.PathUnescape(path)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("URL unescape error"))
-		return
-	}
+	log.Printf("handling GET request")
 
-	// Make sure it is the correct URL
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 {
-		w.WriteHeader(http.StatusBadRequest)
+	// The last part of the request URL should have the ID to delete.
+	_, ok := extractPath(w, r, produceURL)
+	if !ok {
 		return
 	}
 
@@ -236,13 +215,18 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 	}
-	w.WriteHeader(http.StatusInternalServerError)
 }
 
+// The delete endpoint contains the proudce code as the last part of the
+// URL path.  Query strings ar etypically for modfiers, whereas putting
+// it as the last component of the path is more Restful, as it is the
+// name pof the resource.
 func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		defer r.Body.Close()
 	}
+
+	log.Printf("handling DELETE request")
 
 	// The last part of the request URL should have the ID to delete.
 	path := r.URL.EscapedPath()
@@ -254,15 +238,17 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract the code from the request URL and validate it
-	parts := strings.Split(path, "/")
-	if len(parts) != 3 {
+	if strings.Count(path, "/") != 3 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	code := path[strings.LastIndex(path, "/")+1:]
 
-	code, valid := types.ValidateAndConvertProduceCode(parts[2])
+	// Validate that the code is syntactically correct.
+	code, valid := types.ValidateAndConvertProduceCode(code)
 	if !valid {
 		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("Bad produce code: '%s'", code)))
 		return
 	}
 
@@ -274,19 +260,52 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	case store.NotFoundError:
 		w.WriteHeader(http.StatusNotFound)
 	case nil:
-		// Delete was successful - write HTTP 200 plus status
-		msg := fmt.Sprintf("Produce Code '%s' was successfully deleted", code)
-		s := types.StatusResponse{Status: msg}
-		b, err := json.MarshalIndent(s, "", "  ")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Write(b)
-		w.WriteHeader(http.StatusOK)
+		// Delete was successful - write HTTP 204 (because we are not returning
+		// any content).  It would be 200 if we were returning an entity.
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+// Map a Go eror to an HTTP status type
+func errorToStatusCode(err error, nilCode int) int {
+	switch err.(type) {
+	case service.InternalError:
+		return http.StatusInternalServerError
+	case service.FormatError:
+		return http.StatusBadRequest
+	case store.AlreadyExistsError:
+		return http.StatusConflict
+	case store.NotFoundError:
+		return http.StatusNotFound
+	case nil:
+		return nilCode
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// extractPath extracts and unescapes the path component.  If an
+// error occurs, it writes the proper response channel data and
+// sets a false boolean result.
+func extractPath(w http.ResponseWriter, r *http.Request,
+	expURL string) (string, bool) {
+	// The last part of the request URL should have the ID to delete.
+	path := r.URL.EscapedPath()
+	path, err := url.PathUnescape(path)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("URL unescape error"))
+		return "", false
+	}
+
+	// Make sure it is the correct URL
+	if path != expURL && path != expURL+"/" {
+		w.WriteHeader(http.StatusBadRequest)
+		return "", false
+	}
+	return path, true
 }
 
 // Weave the context into the incoming request in case there is anything

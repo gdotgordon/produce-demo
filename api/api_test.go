@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -25,11 +28,17 @@ var (
 		Name:      "Green Pepper",
 		UnitPrice: types.USD(79),
 	}
+
+	dfltProduceBadCode = types.Produce{
+		Code:      "A12T-4GH7-QP",
+		Name:      "Lettuce",
+		UnitPrice: (346),
+	}
 )
 
 func TestStatusEndpoint(t *testing.T) {
 	api := apiImpl{service: DummyService{}}
-	req, err := http.NewRequest(http.MethodGet, "v1/status", nil)
+	req, err := http.NewRequest(http.MethodGet, statusURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +60,114 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestAddEndpoint(t *testing.T) {
+	for i, v := range []struct {
+		url       string
+		req       types.ProduceAddRequest
+		servErr   error
+		existing  []types.Produce
+		expStatus int
+		expRes    []types.ProduceAddItemResponse
+	}{
+		{
+			url:       produceURL + "/hello",
+			expStatus: http.StatusBadRequest,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{}},
+			expStatus: http.StatusBadRequest,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			expStatus: http.StatusCreated,
+		},
+		{
+			url:       produceURL,
+			existing:  []types.Produce{dfltProduce},
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			expStatus: http.StatusConflict,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, secondProduce}},
+			expStatus: http.StatusCreated,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, dfltProduce}},
+			expStatus: http.StatusOK,
+			expRes: []types.ProduceAddItemResponse{
+				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M", StatusCode: 201},
+				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M",
+					StatusCode: http.StatusConflict,
+					Error:      "produce code 'Dup' already exists",
+				},
+			},
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduceBadCode}},
+			expStatus: http.StatusBadRequest,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			servErr:   errors.New("hiya"),
+			expStatus: http.StatusInternalServerError,
+		},
+	} {
+		d := DummyService{}
+		if v.servErr != nil {
+			d.err = v.servErr
+		}
+		if v.existing != nil {
+			d.existing = v.existing
+		}
+		api := apiImpl{service: d}
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(api.handleProduce)
+
+		// Setup the incoming payload
+		var rdr io.Reader
+		if v.req.Items != nil {
+			b, err := json.Marshal(v.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rdr = bytes.NewReader(b)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, v.url, rdr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler.ServeHTTP(rr, req)
+		if status := rr.Code; status != v.expStatus {
+			t.Fatalf("(%d) handler returned wrong status code: got %d, expected %d",
+				i, rr.Code, v.expStatus)
+		}
+
+		if len(v.expRes) > 0 {
+			var par types.ProduceAddResponse
+			err = json.Unmarshal(rr.Body.Bytes(), &par)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(v.expRes) != len(par.Items) {
+				t.Fatalf("mismatched add response count: %d, %d", len(v.expRes),
+					len(par.Items))
+			}
+			for i, p := range par.Items {
+				if v.expRes[i] != p {
+					t.Fatalf("(%d) unexpected return item: %+v", i, p)
+				}
+			}
+		}
+	}
+}
+
 func TestDeleteEndpoint(t *testing.T) {
 	for i, v := range []struct {
 		url       string
@@ -60,22 +177,21 @@ func TestDeleteEndpoint(t *testing.T) {
 		expBody   string
 	}{
 		{
-			url:       "v1/produce",
+			url:       produceURL,
 			expStatus: http.StatusBadRequest,
 		},
 		{
-			url:       "v1/produce/YRT6-72AS-K736-L4AR",
+			url:       produceURL + "/YRT6-72AS-K736-L4AR",
 			servErr:   store.NotFoundError{Code: "YRT6-72AS-K736-L4AR"},
 			expStatus: http.StatusNotFound,
 		},
 		{
-			url:       "v1/produce/YRT6-72AS-K736-L4AR",
+			url:       produceURL + "/YRT6-72AS-K736-L4AR",
 			existing:  []types.Produce{types.Produce{Code: "YRT6-72AS-K736-L4AR"}},
-			expStatus: http.StatusOK,
-			expBody:   "{\n" + `  "status": "Produce Code 'YRT6-72AS-K736-L4AR' was successfully deleted"` + "\n}",
+			expStatus: http.StatusNoContent,
 		},
 		{
-			url:       "v1/produce/badcode",
+			url:       produceURL + "/badcode",
 			expStatus: http.StatusBadRequest,
 		},
 	} {
@@ -85,7 +201,7 @@ func TestDeleteEndpoint(t *testing.T) {
 		}
 		api := apiImpl{service: d}
 		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(api.handleProduce)
+		handler := http.HandlerFunc(api.handleDelete)
 
 		// Bad request: we need the code in the url
 		req, err := http.NewRequest(http.MethodDelete, v.url, nil)
@@ -116,18 +232,18 @@ func TestListEndpoint(t *testing.T) {
 		expRes    []types.Produce
 	}{
 		{
-			url:       "v1/produce",
+			url:       produceURL,
 			servErr:   service.InternalError{Message: "Unexpceted channel close"},
 			expStatus: http.StatusInternalServerError,
 		},
 		{
-			url:       "v1/produce",
+			url:       produceURL,
 			existing:  []types.Produce{dfltProduce, secondProduce},
 			expStatus: http.StatusOK,
 			expRes:    []types.Produce{dfltProduce, secondProduce},
 		},
 		{
-			url:       "v1/produce/fred",
+			url:       produceURL + "/fred",
 			expStatus: http.StatusBadRequest,
 		},
 	} {
@@ -192,20 +308,27 @@ func TestListEndpoint(t *testing.T) {
 
 func TestInvalidMethod(t *testing.T) {
 	api := apiImpl{service: DummyService{}}
-	req, err := http.NewRequest(http.MethodPut, "v1/produce", nil)
+	req, err := http.NewRequest(http.MethodPut, produceURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Call the handler for status
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(wrapContext(context.Background(), api.getStatus))
+	handler := http.HandlerFunc(wrapContext(context.Background(), api.handleProduce))
 	handler.ServeHTTP(rr, req)
 
 	// Verify the code and expected body
 	if status := rr.Code; status != http.StatusNotFound {
 		t.Errorf("handler returned wrong status code: got %d, expected %d",
 			rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestInit(t *testing.T) {
+	err := Init(context.Background(), http.NewServeMux(), DummyService{})
+	if err != nil {
+		t.Fatalf("API init error: %v", err)
 	}
 }
 
@@ -221,12 +344,18 @@ func (d DummyService) Add(ctx context.Context, items []types.Produce) ([]service
 	res := make([]service.AddResult, len(items))
 	for i, v := range items {
 		res[i].Code = v.Code
+		str := types.ValidateAndConvertProduce(&v)
+		if str != "" {
+			res[i].Err = service.FormatError{Message: str}
+			continue
+		}
 		for _, w := range d.existing {
 			if v.Code == w.Code {
 				res[i].Err = store.AlreadyExistsError{Code: "Dup"}
 				break
 			}
 		}
+		d.existing = append(d.existing, v)
 	}
 	return res, nil
 }

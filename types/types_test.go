@@ -1,6 +1,42 @@
 package types
 
-import "testing"
+import (
+	"testing"
+)
+
+var (
+	dfltProduce = Produce{
+		Code:      "A12T-4GH7-QPL9-3N4M",
+		Name:      "Lettuce",
+		UnitPrice: (346),
+	}
+
+	secondProduce = Produce{
+		Code:      "YRT6-72AS-K736-L4AR",
+		Name:      "Green Pepper",
+		UnitPrice: (79),
+	}
+
+	dfltLCProduce = Produce{
+		Code:      "a12t-4gh7-qpL9-3n4m",
+		Name:      "lettuce",
+		UnitPrice: (346),
+	}
+
+	dfltProduceBadCode = Produce{
+		Code:      "A12T-4GH7-QP",
+		Name:      "Lettuce",
+		UnitPrice: (346),
+	}
+
+	dfltProduceBadName = Produce{
+		Code:      "A12T-4GH7-QPL9-3N4M",
+		Name:      "Lettuce+Cukes",
+		UnitPrice: (346),
+	}
+
+	noProduce = Produce{}
+)
 
 func TestProduceCodeConversion(t *testing.T) {
 	for i, v := range []struct {
@@ -97,6 +133,42 @@ func TestProduceNameConversion(t *testing.T) {
 		}
 		if str != v.expected {
 			t.Fatalf("(%d) Unexpected converted string: '%s'", i, str)
+		}
+	}
+}
+
+func TestProduceConversion(t *testing.T) {
+	for i, v := range []struct {
+		input   Produce
+		expStr  string
+		expProd Produce
+	}{
+		{
+			input:   dfltProduce,
+			expProd: dfltProduce,
+		},
+		{
+			input:   dfltLCProduce,
+			expProd: dfltProduce,
+		},
+		{
+			input:  dfltProduceBadCode,
+			expStr: "invalid code: 'A12T-4GH7-QP'",
+		},
+		{
+			input:  dfltProduceBadName,
+			expStr: "invalid name: 'Lettuce+Cukes'",
+		},
+	} {
+		citem := v.input
+		str := ValidateAndConvertProduce(&citem)
+		if str != v.expStr {
+			t.Fatalf("(%d) Unexpected converted string: '%s'", i, str)
+		}
+		if v.expProd != noProduce {
+			if citem != v.expProd {
+				t.Fatalf("(%d) Bad produce conversion: '%+v'", i, citem)
+			}
 		}
 	}
 }

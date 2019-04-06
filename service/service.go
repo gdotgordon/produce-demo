@@ -26,10 +26,23 @@ func (ie InternalError) Error() string {
 	return fmt.Sprintf("an unexpected error occurred: %s", ie.Message)
 }
 
+// FormatError is used when an item doesn't conform to the expcted format,
+// particularly the syntax for a field value.
+// while invloking the service
+type FormatError struct {
+	Message string
+}
+
+// Error satisfies the error interface.
+func (fe FormatError) Error() string {
+	return fmt.Sprintf("invalid item format: %s", fe.Message)
+}
+
 // AddResult is used to communicate back the results of each of the
 // adds  to the api layer.
 type AddResult struct {
 	Code string
+	Desc string
 	Err  error
 }
 
@@ -86,6 +99,12 @@ func (ps ProduceService) Add(ctx context.Context,
 		// Need the proper loop index bound to the goroutine
 		i := i
 		go func() {
+			// Enforce the semntics and convert the produce items before
+			// sending them to storage
+			msg := types.ValidateAndConvertProduce(&items[i])
+			if msg != "" {
+				wch <- addResp{ndx: i, err: FormatError{Message: msg}}
+			}
 			addErr := ps.store.Add(ctx, items[i])
 			wch <- addResp{ndx: i, err: addErr}
 		}()
