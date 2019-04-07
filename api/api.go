@@ -8,7 +8,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -71,10 +70,8 @@ func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 // a third-partry muxer, we need to manually work with the dispatch
 // of the "v1/produce" endpoint.
 func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Method is '%s'\n", r.Method)
 	switch r.Method {
 	case http.MethodPost:
-		log.Println("Go here!")
 		a.handleAdd(w, r)
 	case http.MethodGet:
 		a.handleGet(w, r)
@@ -146,6 +143,7 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		} else {
 			w.WriteHeader(errorToStatusCode(addRes[0].Err, http.StatusCreated))
 		}
+		return
 	}
 	// If there is more than one add, and at least one failure, we'll return
 	// HTTP 200 (multi-status) and return a JSON object with the results of each
@@ -238,34 +236,18 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract the code from the request URL and validate it
+	if strings.HasSuffix(path, "/") {
+		path = path[:len(path)-1]
+	}
 	if strings.Count(path, "/") != 3 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	code := path[strings.LastIndex(path, "/")+1:]
 
-	// Validate that the code is syntactically correct.
-	code, valid := types.ValidateAndConvertProduceCode(code)
-	if !valid {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("Bad produce code: '%s'", code)))
-		return
-	}
-
 	// Invoke the service delete call
 	err = a.service.Delete(r.Context(), code)
-	switch err.(type) {
-	case service.InternalError:
-		w.WriteHeader(http.StatusInternalServerError)
-	case store.NotFoundError:
-		w.WriteHeader(http.StatusNotFound)
-	case nil:
-		// Delete was successful - write HTTP 204 (because we are not returning
-		// any content).  It would be 200 if we were returning an entity.
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	w.WriteHeader(errorToStatusCode(err, http.StatusNoContent))
 }
 
 // Map a Go eror to an HTTP status type

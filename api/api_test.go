@@ -34,6 +34,12 @@ var (
 		Name:      "Lettuce",
 		UnitPrice: (346),
 	}
+
+	secondProduceBadName = types.Produce{
+		Code:      "DRT6-72AS-K736-L4AR",
+		Name:      "Green-Pepper",
+		UnitPrice: types.USD(79),
+	}
 )
 
 func TestStatusEndpoint(t *testing.T) {
@@ -103,6 +109,18 @@ func TestAddEndpoint(t *testing.T) {
 				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M",
 					StatusCode: http.StatusConflict,
 					Error:      "produce code 'Dup' already exists",
+				},
+			},
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, secondProduceBadName}},
+			expStatus: http.StatusOK,
+			expRes: []types.ProduceAddItemResponse{
+				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M", StatusCode: 201},
+				types.ProduceAddItemResponse{Code: "DRT6-72AS-K736-L4AR",
+					StatusCode: http.StatusBadRequest,
+					Error:      "invalid item format: invalid name: 'Green-Pepper'",
 				},
 			},
 		},
@@ -189,10 +207,6 @@ func TestDeleteEndpoint(t *testing.T) {
 			url:       produceURL + "/YRT6-72AS-K736-L4AR",
 			existing:  []types.Produce{types.Produce{Code: "YRT6-72AS-K736-L4AR"}},
 			expStatus: http.StatusNoContent,
-		},
-		{
-			url:       produceURL + "/badcode",
-			expStatus: http.StatusBadRequest,
 		},
 	} {
 		d := DummyService{}

@@ -10,6 +10,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
@@ -42,7 +43,6 @@ func (fe FormatError) Error() string {
 // adds  to the api layer.
 type AddResult struct {
 	Code string
-	Desc string
 	Err  error
 }
 
@@ -81,13 +81,16 @@ func New(store store.ProduceStore) ProduceService {
 // attempting the add.
 func (ps ProduceService) Add(ctx context.Context,
 	items []types.Produce) ([]AddResult, error) {
+	if len(items) == 0 {
+		return []AddResult{}, nil
+	}
+
 	// Each goroutine will pass it's index into the array
 	// and a possible error back through the channel.
 	type addResp struct {
 		ndx int
 		err error
 	}
-
 	ch := make(chan addResp)
 	defer close(ch)
 
@@ -101,24 +104,26 @@ func (ps ProduceService) Add(ctx context.Context,
 		go func() {
 			// Enforce the semntics and convert the produce items before
 			// sending them to storage
+			resp := addResp{ndx: i}
 			msg := types.ValidateAndConvertProduce(&items[i])
 			if msg != "" {
-				wch <- addResp{ndx: i, err: FormatError{Message: msg}}
+				resp.err = FormatError{Message: msg}
+			} else {
+				resp.err = ps.store.Add(ctx, items[i])
 			}
-			addErr := ps.store.Add(ctx, items[i])
-			wch <- addResp{ndx: i, err: addErr}
+			wch <- resp
 		}()
 	}
 
-	// Process each retrun from add, and store the error result
+	// Process each return from add, and store the error result
 	// in the appropriate slot in the return item
-	for i := 0; i < len(items); i++ {
+	for n := 0; n < len(items); n++ {
 		aresp, ok := <-ch
 		if !ok {
 			// Channel was mysteriously closed!
 			return nil, InternalError{Message: "Unexpceted channel close"}
 		}
-		res[aresp.ndx].Code = items[i].Code
+		res[aresp.ndx].Code = items[aresp.ndx].Code
 		res[aresp.ndx].Err = aresp.err
 	}
 	return res, nil
@@ -133,7 +138,14 @@ func (ps ProduceService) Delete(ctx context.Context, code string) error {
 	// Run the delete in a goroutine as requested by the spec.
 	var wch chan<- error = ch
 	go func() {
-		delErr := ps.store.Delete(ctx, code)
+		// Validate that the code is syntactically correct.
+		var delErr error
+		code, valid := types.ValidateAndConvertProduceCode(code)
+		if !valid {
+			delErr = FormatError{Message: code}
+		} else {
+			delErr = ps.store.Delete(ctx, code)
+		}
 		wch <- delErr
 	}()
 
@@ -175,4 +187,34 @@ func (ps ProduceService) ListAll(ctx context.Context) ([]types.Produce, error) {
 // Clear is a convenience API to reset the database, useful for testing.
 func (ps ProduceService) Clear(ctx context.Context) error {
 	return ps.store.Clear(ctx)
+}
+
+// ResSorter sorts slices of AddResult.  Sort by key, since it is unique.
+type resSorter struct {
+	res []AddResult
+}
+
+// Len is part of sort.Interface.
+func (rs resSorter) Len() int {
+	return len(rs.res)
+}
+
+// Swap is part of sort.Interface.
+func (rs resSorter) Swap(i, j int) {
+	rs.res[i], rs.res[j] = rs.res[j], rs.res[i]
+}
+
+// Less is part of sort.Interface.
+func (rs resSorter) Less(i, j int) bool {
+	res := strings.Compare(rs.res[i].Code, rs.res[j].Code)
+	if res != 0 {
+		return res < 0
+	}
+	if rs.res[i].Err == nil {
+		return true
+	}
+	if rs.res[j].Err == nil {
+		return false
+	}
+	return strings.Compare(rs.res[i].Err.Error(), rs.res[2].Err.Error()) < 0
 }

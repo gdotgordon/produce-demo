@@ -55,12 +55,14 @@ func TestProduceCodeConversion(t *testing.T) {
 			expected: "TQ4C-VV6T-75ZX-1RMR",
 		},
 		{
-			input: "T%4C-VV6t-75ZX-1)MR",
-			valid: false,
+			input:    "T%4C-VV6t-75ZX-1)MR",
+			valid:    false,
+			expected: "T%4C-VV6t-75ZX-1)MR",
 		},
 		{
-			input: "Tq4C-VV6t-75ZX",
-			valid: false,
+			input:    "Tq4C-VV6t-75ZX",
+			valid:    false,
+			expected: "Tq4C-VV6t-75ZX",
 		},
 		{
 			input: "",
@@ -119,8 +121,9 @@ func TestProduceNameConversion(t *testing.T) {
 			expected: "Lettuce 2",
 		},
 		{
-			input: " green pepper",
-			valid: false,
+			input:    " green pepper",
+			valid:    false,
+			expected: " green pepper",
 		},
 		{
 			input: "",

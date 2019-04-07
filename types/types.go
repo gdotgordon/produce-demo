@@ -52,7 +52,7 @@ type ProduceListResponse struct {
 type ProduceAddItemResponse struct {
 	Code       string `json:"code"`
 	StatusCode int    `json:"status_code"`
-	Error      string `json:"error"`
+	Error      string `json:"error,omitempty"`
 }
 
 // ProduceAddResponse is the repsonse to a Produce add request.  It
@@ -72,7 +72,7 @@ type StatusResponse struct {
 // syntactically valid and if so, puts it in canoncial for (upper case).
 func ValidateAndConvertProduceCode(code string) (string, bool) {
 	if !codeExp.Match([]byte(code)) {
-		return "", false
+		return code, false
 	}
 	return strings.ToUpper(code), true
 }
@@ -82,13 +82,13 @@ func ValidateAndConvertProduceCode(code string) (string, bool) {
 // names, the canonical form is leading characters capitalized.  Also
 // note, the leading character cannot bne a space, but internal characters
 // may be white space.
-func ValidateAndConvertName(code string) (string, bool) {
-	if !nameExp.Match([]byte(code)) {
-		return "", false
+func ValidateAndConvertName(name string) (string, bool) {
+	if !nameExp.Match([]byte(name)) {
+		return name, false
 	}
 
 	var prev = ' '
-	runes := []rune(code)
+	runes := []rune(name)
 	var res []rune
 	for _, v := range runes {
 		if unicode.IsSpace(prev) {
