@@ -8,4 +8,5 @@ go:
 
 script:
   - ./.travis.gofmt.sh
+  - go vet ./...
   - go test -v -race $(go list ./... | grep -v vendor)
