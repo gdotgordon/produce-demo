@@ -1,0 +1,11 @@
+# .travis.yml
+language: go
+
+sudo: false
+
+go:
+  - "1.12.x"
+
+script:
+  - ./.travis.gofmt.sh
+  - go test -v -race $(go list ./... | grep -v vendor)
