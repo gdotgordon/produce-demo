@@ -14,8 +14,8 @@ script:
 
 before_install:
   - export TAG="v0.1"
-  - export REPO=$DOCKER_USERNAME/demo
-  - docker build -t $REPO:$TAG -f Dockerfile .
+  - export REPO=$DOCKER_USERNAME/produce-demo
+  - docker build -t $REPO:$TAG -t $REPO:latest -f Dockerfile .
 
 deploy:
   provider: script

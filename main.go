@@ -23,6 +23,7 @@ var (
 )
 
 func main() {
+	flag.Parse()
 
 	// We'll propagate the context with cancel thorughout the program,
 	// such as http clients, server methods we implement, and other
@@ -49,7 +50,7 @@ func main() {
 
 	// Start Server
 	go func() {
-		log.Println("Starting Server")
+		log.Println("Starting Server on port", *portNum)
 		if err := srv.ListenAndServe(); err != nil {
 			log.Fatal(err)
 		}

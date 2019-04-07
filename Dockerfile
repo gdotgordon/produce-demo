@@ -17,4 +17,5 @@ WORKDIR /root/
 # Make a significantly slimmed-down final result.
 COPY --from=0 /go/src/github.com/gdotgordon/produce-demo .
 
-CMD ["./produce-demo"]
+ENTRYPOINT ["./produce-demo"]
+CMD ["--port=8080"]
