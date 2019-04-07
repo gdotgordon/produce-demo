@@ -1,7 +1,8 @@
 # .travis.yml
 language: go
 
-sudo: false
+services:
+  - docker
 
 go:
   - "1.12.x"
@@ -10,3 +11,14 @@ script:
   - ./.travis.gofmt.sh
   - go vet ./...
   - go test -v -race $(go list ./... | grep -v vendor)
+
+before_install:
+  - export TAG="v0.1"
+  - export REPO=$DOCKER_USERNAME/demo
+  - docker build -t $REPO:$TAG -f Dockerfile .
+
+deploy:
+  provider: script
+  script: bash docker_push
+  on:
+    branch: master
