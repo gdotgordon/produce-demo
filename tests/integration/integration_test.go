@@ -48,7 +48,7 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(b, &statResp); err != nil {
 		t.Fatal("error deserializing JSON", err)
 	}
-	if statResp["status"] != "produce service up and running" {
+	if statResp["status"] != "produce service is up and running" {
 		t.Fatal("unexpected status repsonse", statResp["status"])
 	}
 }

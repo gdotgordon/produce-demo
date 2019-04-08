@@ -54,7 +54,7 @@ func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	sr := types.StatusResponse{Status: "produce service up and running"}
+	sr := types.StatusResponse{Status: "produce service is up and running"}
 	b, err := json.MarshalIndent(sr, "", "  ")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -174,8 +174,8 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
 	w.Write(b)
 }
 

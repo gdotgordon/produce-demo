@@ -59,7 +59,7 @@ func TestStatusEndpoint(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %d, expected %d",
 			rr.Code, http.StatusOK)
 	}
-	expected := "{\n" + `  "status": "produce service up and running"` + "\n}"
+	expected := "{\n" + `  "status": "produce service is up and running"` + "\n}"
 	body := rr.Body.String()
 	if body != expected {
 		t.Errorf("unexpected body: %s, expected %s", body, expected)
