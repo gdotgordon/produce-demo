@@ -1,3 +1,3 @@
 #!/bin/bash
 echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-docker push gagordon12/produce-demo
+docker push ${DOCKER_USERNAME}/produce-demo
