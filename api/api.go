@@ -8,8 +8,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/gdotgordon/produce-demo/service"
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
+	"go.uber.org/zap"
 )
 
 // The staus URL is a liveness check, and the produce endpoint is the
@@ -30,13 +32,15 @@ const (
 // API is the item that dispatches to the endpoint implmentations
 type apiImpl struct {
 	service service.Service
+	log     *zap.SugaredLogger
 }
 
 // Init sets up the endpoint processing.  There is nothing returned, other
 // than potntial errors, because the endpoint handling is configured in
 // the passed-in muxer.
-func Init(ctx context.Context, mux *http.ServeMux, service service.Service) error {
-	ap := apiImpl{service: service}
+func Init(ctx context.Context, mux *http.ServeMux, service service.Service,
+	log *zap.SugaredLogger) error {
+	ap := apiImpl{service: service, log: log}
 	mux.Handle(statusURL, wrapContext(ctx, ap.getStatus))
 	mux.Handle(produceURL, wrapContext(ctx, ap.handleProduce))
 	mux.Handle(produceURL+"/", wrapContext(ctx, ap.handleProduce))
@@ -98,13 +102,13 @@ func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
 // stays within REST semantics.
 func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	if r.Body == nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeBadRequestResponse(w, errors.New("No body for POST"))
 		return
 	}
 
 	defer r.Body.Close()
 
-	log.Printf("handling POST request")
+	a.log.Debugw("handling POST request", "url", r.URL.String())
 
 	// Ensure the URL path is exactly the produce base URL.
 	_, ok := extractPath(w, r, produceURL)
@@ -121,11 +125,12 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = json.Unmarshal(b, &par); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		writeBadRequestResponse(w, err)
 		return
 	}
 	if len(par.Items) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
+		writeBadRequestResponse(w,
+			errors.New("At least one item must be specifed to add"))
 		return
 	}
 
@@ -186,7 +191,7 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 	}
 
-	log.Printf("handling GET request")
+	a.log.Debugw("handling GET request", "url", r.URL.String())
 
 	// The last part of the request URL should have the ID to delete.
 	_, ok := extractPath(w, r, produceURL)
@@ -224,7 +229,7 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 	}
 
-	log.Printf("handling DELETE request")
+	a.log.Debugw("handling DELETE request", "url", r.URL.String())
 
 	// The last part of the request URL should have the ID to delete.
 	path := r.URL.EscapedPath()
@@ -240,14 +245,20 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 		path = path[:len(path)-1]
 	}
 	if strings.Count(path, "/") != 3 {
-		w.WriteHeader(http.StatusBadRequest)
+		writeBadRequestResponse(w, fmt.Errorf("invalid URL for delete: %s",
+			r.URL.String()))
 		return
 	}
 	code := path[strings.LastIndex(path, "/")+1:]
 
 	// Invoke the service delete call
 	err = a.service.Delete(r.Context(), code)
-	w.WriteHeader(errorToStatusCode(err, http.StatusNoContent))
+	sc := errorToStatusCode(err, http.StatusNoContent)
+	if sc == http.StatusBadRequest {
+		writeBadRequestResponse(w, err)
+	} else {
+		w.WriteHeader(sc)
+	}
 }
 
 // Map a Go eror to an HTTP status type
@@ -268,6 +279,15 @@ func errorToStatusCode(err error, nilCode int) int {
 	}
 }
 
+// For HTTP bad request repsonses, serialize a JSON status message with
+// the cause.
+func writeBadRequestResponse(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusBadRequest)
+	b, _ := json.MarshalIndent(types.StatusResponse{Status: err.Error()}, "", "  ")
+	w.Write(b)
+}
+
 // extractPath extracts and unescapes the path component.  If an
 // error occurs, it writes the proper response channel data and
 // sets a false boolean result.
@@ -284,7 +304,7 @@ func extractPath(w http.ResponseWriter, r *http.Request,
 
 	// Make sure it is the correct URL
 	if path != expURL && path != expURL+"/" {
-		w.WriteHeader(http.StatusBadRequest)
+		writeBadRequestResponse(w, fmt.Errorf("invalid URL: %s", path))
 		return "", false
 	}
 	return path, true

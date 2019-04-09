@@ -14,6 +14,7 @@ import (
 	"github.com/gdotgordon/produce-demo/service"
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
+	"go.uber.org/zap"
 )
 
 var (
@@ -43,7 +44,9 @@ var (
 )
 
 func TestStatusEndpoint(t *testing.T) {
-	api := apiImpl{service: DummyService{}}
+	lg, _ := zap.NewDevelopment()
+	log := lg.Sugar()
+	api := apiImpl{log: log}
 	req, err := http.NewRequest(http.MethodGet, statusURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +146,9 @@ func TestAddEndpoint(t *testing.T) {
 		if v.existing != nil {
 			d.existing = v.existing
 		}
-		api := apiImpl{service: d}
+		lg, _ := zap.NewDevelopment()
+		log := lg.Sugar()
+		api := apiImpl{service: d, log: log}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleProduce)
 
@@ -213,7 +218,9 @@ func TestDeleteEndpoint(t *testing.T) {
 		if v.servErr != nil {
 			d.err = v.servErr
 		}
-		api := apiImpl{service: d}
+		lg, _ := zap.NewDevelopment()
+		log := lg.Sugar()
+		api := apiImpl{service: d, log: log}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleDelete)
 
@@ -268,7 +275,9 @@ func TestListEndpoint(t *testing.T) {
 		if len(v.existing) > 0 {
 			d.existing = v.existing
 		}
-		api := apiImpl{service: d}
+		lg, _ := zap.NewDevelopment()
+		log := lg.Sugar()
+		api := apiImpl{service: d, log: log}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleProduce)
 
@@ -321,7 +330,9 @@ func TestListEndpoint(t *testing.T) {
 }
 
 func TestInvalidMethod(t *testing.T) {
-	api := apiImpl{service: DummyService{}}
+	lg, _ := zap.NewDevelopment()
+	log := lg.Sugar()
+	api := apiImpl{log: log}
 	req, err := http.NewRequest(http.MethodPut, produceURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +351,9 @@ func TestInvalidMethod(t *testing.T) {
 }
 
 func TestInit(t *testing.T) {
-	err := Init(context.Background(), http.NewServeMux(), DummyService{})
+	lg, _ := zap.NewDevelopment()
+	log := lg.Sugar()
+	err := Init(context.Background(), http.NewServeMux(), DummyService{}, log)
 	if err != nil {
 		t.Fatalf("API init error: %v", err)
 	}

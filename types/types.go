@@ -12,16 +12,6 @@ import (
 	"unicode"
 )
 
-var (
-	// Regular expression to validate a produce code, which is 4 sets of
-	// hyphen-separated quartets of alphanumerics.
-	codeExp = regexp.MustCompile(`^([A-Za-z0-9]{4}-){3}([A-Za-z0-9]){4}$`)
-
-	// Regular expression to match produce name: (Unicode) alphanumerics
-	// plus white space.
-	nameExp = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}\s]*$`)
-)
-
 // Produce represents a code, name and unit price for an item in
 // the supermarket.  Note the unit price is a custom type that maps
 // as JSON string to an internal format that can be worked with
@@ -67,6 +57,16 @@ type ProduceAddResponse struct {
 type StatusResponse struct {
 	Status string `json:"status"`
 }
+
+var (
+	// Regular expression to validate a produce code, which is 4 sets of
+	// hyphen-separated quartets of alphanumerics.
+	codeExp = regexp.MustCompile(`^([A-Za-z0-9]{4}-){3}([A-Za-z0-9]){4}$`)
+
+	// Regular expression to match produce name: (Unicode) alphanumerics
+	// plus white space.
+	nameExp = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}\s]*$`)
+)
 
 // ValidateAndConvertProduceCode returns whether the produce code is
 // syntactically valid and if so, puts it in canoncial for (upper case).

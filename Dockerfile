@@ -1,5 +1,5 @@
 # Start with a full-fledged golang image, but strip it from the final image.
-FROM golang:1.12.1-alpine
+FROM golang:1.12.2-alpine
 
 LABEL maintainer="Gary Gordon <gagordon12@gmail.com>"
 
@@ -17,4 +17,4 @@ WORKDIR /root/
 COPY --from=0 /go/src/github.com/gdotgordon/produce-demo .
 
 ENTRYPOINT ["./produce-demo"]
-CMD ["--port=8080"]
+CMD ["--port=8080" "--log=production"]
