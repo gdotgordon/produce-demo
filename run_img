@@ -1,0 +1,3 @@
+#!/bin/bash
+TAG=$(git describe --abbrev=0)
+docker run -p 8080 --name produce-demo --rm gagordon12/produce-demo:${TAG}

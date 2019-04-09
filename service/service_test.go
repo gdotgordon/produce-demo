@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
+	"go.uber.org/zap"
 )
 
 var (
@@ -105,7 +106,7 @@ func TestAdd(t *testing.T) {
 		},
 	} {
 		d := DummyStore{store: store.New()}
-		service := New(d)
+		service := New(d, newLogger(t))
 		res, err := service.Add(context.Background(), v.req)
 
 		if v.expErr != err {
@@ -148,7 +149,7 @@ func TestDelete(t *testing.T) {
 		},
 	} {
 		d := DummyStore{store: store.New()}
-		service := New(d)
+		service := New(d, newLogger(t))
 		if v.add != nil {
 			d.Add(context.Background(), *v.add)
 		}
@@ -161,7 +162,7 @@ func TestDelete(t *testing.T) {
 
 func TestList(t *testing.T) {
 	d := DummyStore{store: store.New()}
-	service := New(d)
+	service := New(d, newLogger(t))
 	err := d.Add(context.Background(), dfltProduce)
 	if err != nil {
 		t.Fatalf("unexpected error adding item: %v", err)
@@ -182,6 +183,14 @@ func TestList(t *testing.T) {
 		(items[1] == dfltProduce && items[0] == secondProduce)) {
 		t.Fatalf("unexpected list lcontents: %v", items)
 	}
+}
+
+func newLogger(t *testing.T) *zap.SugaredLogger {
+	lg, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatalf("cannot create logger: %v", err)
+	}
+	return lg.Sugar()
 }
 
 type DummyStore struct {

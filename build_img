@@ -1,0 +1,4 @@
+#!/bin/bash
+TAG=$(git describe --abbrev=0)
+docker image rm gagordon12/produce-demo:${TAG}
+docker build -t gagordon12/produce-demo:latest -t gagordon12/produce-demo:${TAG} .

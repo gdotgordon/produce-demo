@@ -44,9 +44,7 @@ var (
 )
 
 func TestStatusEndpoint(t *testing.T) {
-	lg, _ := zap.NewDevelopment()
-	log := lg.Sugar()
-	api := apiImpl{log: log}
+	api := apiImpl{log: newLogger(t)}
 	req, err := http.NewRequest(http.MethodGet, statusURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -59,13 +57,13 @@ func TestStatusEndpoint(t *testing.T) {
 
 	// Verify the code and expected body
 	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %d, expected %d",
+		t.Fatalf("handler returned wrong status code: got %d, expected %d",
 			rr.Code, http.StatusOK)
 	}
 	expected := "{\n" + `  "status": "produce service is up and running"` + "\n}"
 	body := rr.Body.String()
 	if body != expected {
-		t.Errorf("unexpected body: %s, expected %s", body, expected)
+		t.Fatalf("unexpected body: %s, expected %s", body, expected)
 	}
 }
 
@@ -73,6 +71,7 @@ func TestAddEndpoint(t *testing.T) {
 	for i, v := range []struct {
 		url       string
 		req       types.ProduceAddRequest
+		asSingle  bool
 		servErr   error
 		existing  []types.Produce
 		expStatus int
@@ -90,6 +89,12 @@ func TestAddEndpoint(t *testing.T) {
 		{
 			url:       produceURL,
 			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			expStatus: http.StatusCreated,
+		},
+		{
+			url:       produceURL,
+			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			asSingle:  true,
 			expStatus: http.StatusCreated,
 		},
 		{
@@ -146,18 +151,25 @@ func TestAddEndpoint(t *testing.T) {
 		if v.existing != nil {
 			d.existing = v.existing
 		}
-		lg, _ := zap.NewDevelopment()
-		log := lg.Sugar()
-		api := apiImpl{service: d, log: log}
+		api := apiImpl{service: d, log: newLogger(t)}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleProduce)
 
 		// Setup the incoming payload
 		var rdr io.Reader
+		var b []byte
+		var err error
 		if v.req.Items != nil {
-			b, err := json.Marshal(v.req)
-			if err != nil {
-				t.Fatal(err)
+			if v.asSingle {
+				b, err = json.Marshal(v.req.Items[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				b, err = json.Marshal(v.req)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			rdr = bytes.NewReader(b)
 		}
@@ -218,9 +230,7 @@ func TestDeleteEndpoint(t *testing.T) {
 		if v.servErr != nil {
 			d.err = v.servErr
 		}
-		lg, _ := zap.NewDevelopment()
-		log := lg.Sugar()
-		api := apiImpl{service: d, log: log}
+		api := apiImpl{service: d, log: newLogger(t)}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleDelete)
 
@@ -237,7 +247,7 @@ func TestDeleteEndpoint(t *testing.T) {
 		if v.expBody != "" {
 			b, _ := ioutil.ReadAll(rr.Body)
 			if v.expBody != string(b) {
-				t.Errorf("unexpected body: %s, expected %s", string(b), v.expBody)
+				t.Fatalf("unexpected body: %s, expected %s", string(b), v.expBody)
 			}
 		}
 	}
@@ -275,9 +285,7 @@ func TestListEndpoint(t *testing.T) {
 		if len(v.existing) > 0 {
 			d.existing = v.existing
 		}
-		lg, _ := zap.NewDevelopment()
-		log := lg.Sugar()
-		api := apiImpl{service: d, log: log}
+		api := apiImpl{service: d, log: newLogger(t)}
 		rr := httptest.NewRecorder()
 		handler := http.HandlerFunc(api.handleProduce)
 
@@ -294,7 +302,7 @@ func TestListEndpoint(t *testing.T) {
 		if v.expBody != "" {
 			b, _ := ioutil.ReadAll(rr.Body)
 			if v.expBody != string(b) {
-				t.Errorf("unexpected body: %s, expected %s", string(b), v.expBody)
+				t.Fatalf("unexpected body: %s, expected %s", string(b), v.expBody)
 			}
 		}
 
@@ -310,7 +318,7 @@ func TestListEndpoint(t *testing.T) {
 			}
 
 			if len(v.expRes) != len(ap.Items) {
-				t.Errorf("Did not read expected number of list items")
+				t.Fatalf("Did not read expected number of list items")
 			}
 
 			cnt := 0
@@ -323,7 +331,7 @@ func TestListEndpoint(t *testing.T) {
 				}
 			}
 			if cnt != len(v.expRes) {
-				t.Errorf("did not match expected list results")
+				t.Fatalf("did not match expected list results")
 			}
 		}
 	}
@@ -345,18 +353,25 @@ func TestInvalidMethod(t *testing.T) {
 
 	// Verify the code and expected body
 	if status := rr.Code; status != http.StatusNotFound {
-		t.Errorf("handler returned wrong status code: got %d, expected %d",
+		t.Fatalf("handler returned wrong status code: got %d, expected %d",
 			rr.Code, http.StatusNotFound)
 	}
 }
 
 func TestInit(t *testing.T) {
-	lg, _ := zap.NewDevelopment()
-	log := lg.Sugar()
-	err := Init(context.Background(), http.NewServeMux(), DummyService{}, log)
+	err := Init(context.Background(), http.NewServeMux(), DummyService{},
+		newLogger(t))
 	if err != nil {
 		t.Fatalf("API init error: %v", err)
 	}
+}
+
+func newLogger(t *testing.T) *zap.SugaredLogger {
+	lg, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatalf("cannot create logger: %v", err)
+	}
+	return lg.Sugar()
 }
 
 type DummyService struct {

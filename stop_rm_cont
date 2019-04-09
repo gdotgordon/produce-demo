@@ -1,0 +1,3 @@
+#!/bin/bash
+docker stop produce-demo
+docker rm produce-demo

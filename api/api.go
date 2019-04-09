@@ -21,15 +21,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// The staus URL is a liveness check, and the produce endpoint is the
-
 // Definitions for the supported URLs.
 const (
 	statusURL  = "/v1/status"
 	produceURL = "/v1/produce"
 )
 
-// API is the item that dispatches to the endpoint implmentations
+// API is the item that dispatches to the endpoint implementations
 type apiImpl struct {
 	service service.Service
 	log     *zap.SugaredLogger
@@ -61,8 +59,7 @@ func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 	sr := types.StatusResponse{Status: "produce service is up and running"}
 	b, err := json.MarshalIndent(sr, "", "  ")
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("JSON encode error"))
+		a.notifyInternalServerError(w, "json marshal failed", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -70,9 +67,8 @@ func (a apiImpl) getStatus(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-// Handle all produce endpoints.  Due to the restriction of not using
-// a third-partry muxer, we need to manually work with the dispatch
-// of the "v1/produce" endpoint.
+// Handle all produce endpoints.  with the Go built-in muxer, we need to
+// manually work with the dispatch of the "/v1/produce" endpoint.
 func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -94,26 +90,32 @@ func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
 // at once, but not all of them may succeed.  On the other hand, there
 // is no requirement or rationale for transactionality, so we may end up
 // with partial successes when there are multpile items to add.
+// For a single item that succeeds we return HTTP 201 for success.
 //
-// We handle the case of partial success by sending an HTTP 200 and returning
-// a json list of the individual results.  Since this API is arguably not
-// purely Restful, it is a topic where ten different resources propose ten
-// different ways of doing it, so I picked a reasonable one that somewhat
-// stays within REST semantics.
+// For partial successes we return HTTP 200 and returning a json list of
+// the individual results, with proper semantics per result.  So an item
+// That was sucessfully added will show 201 in it's inidivdual status, even
+// though the over all status returned is 200.  Likewise, if any or all
+// of the requests fail, each will have the proper HTTP status, but again,
+// HTTP 200 will be returned.
+//
+// For individual items added, we do support incoming JSON for a single
+// Produce item not enclosed in parentheses.
+// Since this API is arguably not purely Restful, it is a topic where ten
+// different sources propose ten different ways of doing it, so I picked a
+// reasonable one that somewhat stays within REST semantics.
 func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	if r.Body == nil {
 		writeBadRequestResponse(w, errors.New("No body for POST"))
 		return
 	}
-
 	defer r.Body.Close()
 
 	a.log.Debugw("handling POST request", "url", r.URL.String())
 
 	// Ensure the URL path is exactly the produce base URL.
-	_, ok := extractPath(w, r, produceURL)
+	_, ok := a.extractPath(w, r, produceURL)
 	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -121,23 +123,36 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	var par types.ProduceAddRequest
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		a.notifyInternalServerError(w, "error reading request body", err)
 		return
 	}
+
+	// Unmarshal the payload either into a produce item list, or if not,
+	// then try as a single item.  If we try to marshal a single item and
+	// not a ProduceAddRequest, JSON will incorrectly "succeed", so we'll
+	// check for that right below.
 	if err = json.Unmarshal(b, &par); err != nil {
 		writeBadRequestResponse(w, err)
-		return
 	}
+
 	if len(par.Items) == 0 {
-		writeBadRequestResponse(w,
-			errors.New("At least one item must be specifed to add"))
-		return
+		// See if this is in fact a single produce item.
+		var prod types.Produce
+		serr := json.Unmarshal(b, &prod)
+		if serr == nil {
+			par.Items = []types.Produce{prod}
+		} else {
+			writeBadRequestResponse(w,
+				errors.New("At least one item must be specifed to add"))
+			return
+		}
 	}
 
 	// Invoke the service to do the add
 	addRes, err := a.service.Add(r.Context(), par.Items)
+
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		a.notifyInternalServerError(w, "server error from Add", err)
 		return
 	}
 
@@ -146,7 +161,12 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		if addRes[0].Err == nil {
 			w.WriteHeader(http.StatusCreated)
 		} else {
-			w.WriteHeader(errorToStatusCode(addRes[0].Err, http.StatusCreated))
+			sc := errorToStatusCode(addRes[0].Err, http.StatusCreated)
+			if sc == http.StatusBadRequest {
+				writeBadRequestResponse(w, addRes[0].Err)
+			} else {
+				w.WriteHeader(sc)
+			}
 		}
 		return
 	}
@@ -176,7 +196,7 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	// the descritpive JSON.
 	b, err = json.Marshal(restWrapper)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		a.notifyInternalServerError(w, "JSON marshal error", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -194,7 +214,7 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 	a.log.Debugw("handling GET request", "url", r.URL.String())
 
 	// The last part of the request URL should have the ID to delete.
-	_, ok := extractPath(w, r, produceURL)
+	_, ok := a.extractPath(w, r, produceURL)
 	if !ok {
 		return
 	}
@@ -203,20 +223,20 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 	items, err := a.service.ListAll(r.Context())
 	switch err.(type) {
 	case service.InternalError:
-		w.WriteHeader(http.StatusInternalServerError)
+		a.notifyInternalServerError(w, "error listing items", err)
 	case nil:
 		// List was successful - write HTTP 200
 		resp := types.ProduceListResponse{Items: items}
 		b, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			a.notifyInternalServerError(w, "JSON marshal error", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write(b)
 	default:
-		w.WriteHeader(http.StatusInternalServerError)
+		a.notifyInternalServerError(w, "an unexpected problem occurred", err)
 	}
 }
 
@@ -235,8 +255,7 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.EscapedPath()
 	path, err := url.PathUnescape(path)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("URL unescape error"))
+		a.notifyInternalServerError(w, "URL unescape error", err)
 		return
 	}
 
@@ -259,6 +278,34 @@ func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(sc)
 	}
+}
+
+// extractPath extracts and unescapes the path component.  If an
+// error occurs, it writes the proper response channel data and
+// sets a false boolean result.
+func (a apiImpl) extractPath(w http.ResponseWriter, r *http.Request,
+	expURL string) (string, bool) {
+	// The last part of the request URL should have the ID to delete.
+	path := r.URL.EscapedPath()
+	path, err := url.PathUnescape(path)
+	if err != nil {
+		a.notifyInternalServerError(w, "cannot unescape URL", err)
+		return "", false
+	}
+
+	// Make sure it is the correct URL
+	if path != expURL && path != expURL+"/" {
+		a.log.Errorw("received unexpected URL", "url", path)
+		writeBadRequestResponse(w, fmt.Errorf("invalid URL: %s", path))
+		return "", false
+	}
+	return path, true
+}
+
+func (a apiImpl) notifyInternalServerError(w http.ResponseWriter, msg string,
+	err error) {
+	a.log.Errorw(msg, "error", err)
+	w.WriteHeader(http.StatusInternalServerError)
 }
 
 // Map a Go eror to an HTTP status type
@@ -286,28 +333,6 @@ func writeBadRequestResponse(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	b, _ := json.MarshalIndent(types.StatusResponse{Status: err.Error()}, "", "  ")
 	w.Write(b)
-}
-
-// extractPath extracts and unescapes the path component.  If an
-// error occurs, it writes the proper response channel data and
-// sets a false boolean result.
-func extractPath(w http.ResponseWriter, r *http.Request,
-	expURL string) (string, bool) {
-	// The last part of the request URL should have the ID to delete.
-	path := r.URL.EscapedPath()
-	path, err := url.PathUnescape(path)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("URL unescape error"))
-		return "", false
-	}
-
-	// Make sure it is the correct URL
-	if path != expURL && path != expURL+"/" {
-		writeBadRequestResponse(w, fmt.Errorf("invalid URL: %s", path))
-		return "", false
-	}
-	return path, true
 }
 
 // Weave the context into the incoming request in case there is anything

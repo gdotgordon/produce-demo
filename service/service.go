@@ -1,7 +1,7 @@
-// Package service implments the functionality of the Produce Service.  It
+// Package service implements the functionality of the Produce Service.  It
 // is the intermediary between the api package, which handles HTTP specifcs
 // JSON marshaling, and the store pacakge, whicn is the data store.  In fact,
-// because the store layer implments the storage and retrieval of produce
+// because the store layer implements the storage and retrieval of produce
 // items, the current layer is mostly concerned with the mechanics of
 // interacting with the store, such as creating the goroutines and managing
 // batched requests for add.
@@ -14,6 +14,7 @@ import (
 
 	"github.com/gdotgordon/produce-demo/store"
 	"github.com/gdotgordon/produce-demo/types"
+	"go.uber.org/zap"
 )
 
 // InternalError is used when something unexpectedly failed in the code
@@ -69,11 +70,12 @@ type Service interface {
 // ProduceService is the concrete instance of the service described above.
 type ProduceService struct {
 	store store.ProduceStore
+	log   *zap.SugaredLogger
 }
 
 // New creates and returns a Produce Service instance
-func New(store store.ProduceStore) ProduceService {
-	return ProduceService{store: store}
+func New(store store.ProduceStore, log *zap.SugaredLogger) ProduceService {
+	return ProduceService{store: store, log: log}
 }
 
 // Add adds multiple produce items to the store or returns the status
@@ -92,7 +94,6 @@ func (ps ProduceService) Add(ctx context.Context,
 		err error
 	}
 	ch := make(chan addResp)
-	defer close(ch)
 
 	// Run the delete in a goroutine as requested by the spec.
 	var wch chan<- addResp = ch
@@ -121,6 +122,7 @@ func (ps ProduceService) Add(ctx context.Context,
 		aresp, ok := <-ch
 		if !ok {
 			// Channel was mysteriously closed!
+			ps.log.Errorw("unexpcted channel close", "err", "channel was closed")
 			return nil, InternalError{Message: "Unexpceted channel close"}
 		}
 		res[aresp.ndx].Code = items[aresp.ndx].Code
@@ -133,7 +135,6 @@ func (ps ProduceService) Add(ctx context.Context,
 // or returns an error if it fails.
 func (ps ProduceService) Delete(ctx context.Context, code string) error {
 	ch := make(chan error)
-	defer close(ch)
 
 	// Run the delete in a goroutine as requested by the spec.
 	var wch chan<- error = ch
@@ -153,6 +154,7 @@ func (ps ProduceService) Delete(ctx context.Context, code string) error {
 	err, ok := <-ch
 	if !ok {
 		// Channel was mysteriously closed!
+		ps.log.Errorw("unexpcted channel close", "err", "channel was closed")
 		return InternalError{Message: "Unexpceted channel close"}
 	}
 	return err
@@ -166,7 +168,6 @@ func (ps ProduceService) ListAll(ctx context.Context) ([]types.Produce, error) {
 		err   error
 	}
 	ch := make(chan listResp)
-	defer close(ch)
 
 	// Run the delete in a goroutine as requested by the spec.
 	var wch chan<- listResp = ch
@@ -179,6 +180,7 @@ func (ps ProduceService) ListAll(ctx context.Context) ([]types.Produce, error) {
 	lr, ok := <-ch
 	if !ok {
 		// Channel was mysteriously closed!
+		ps.log.Errorw("unexpcted channel close", "err", "channel was closed")
 		return nil, InternalError{Message: "Unexpceted channel close"}
 	}
 	return lr.items, lr.err

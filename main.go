@@ -19,16 +19,16 @@ import (
 )
 
 var (
-	portNum  int
-	logLevel string
+	portNum  int    // listen port
+	logLevel string // zap log level
+	timeout  int    // server timeout in seconds
 )
 
 func init() {
-
 	flag.IntVar(&portNum, "port", 8080, "HTTP port number")
-
 	flag.StringVar(&logLevel, "log", "production",
 		"log level: 'production', 'development'")
+	flag.IntVar(&timeout, "timeout", 30, "server timeout (seconds)")
 }
 
 func main() {
@@ -53,11 +53,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create the server to handle geocode lookups.  The API module will
+	// Create the server to handle the produce service.  The API module will
 	// set up the routes, as we don't need to know the details in the
 	// main program.
 	muxer := http.NewServeMux()
-	service := service.New(store.New())
+	service := service.New(store.New(), log)
 	if err := api.Init(ctx, muxer, service, log); err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting api: '%s'\n", err)
 		os.Exit(1)
@@ -66,8 +66,8 @@ func main() {
 	srv := &http.Server{
 		Handler:      muxer,
 		Addr:         fmt.Sprintf(":%d", portNum),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  time.Duration(timeout) * time.Second,
+		WriteTimeout: time.Duration(timeout) * time.Second,
 	}
 
 	// Start Server
