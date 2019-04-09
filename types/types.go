@@ -23,22 +23,18 @@ type Produce struct {
 }
 
 // ProduceAddRequest defines the JSON format for the request to add
-// one or more items to the list of produce.
-type ProduceAddRequest struct {
-	Items []Produce `json:"items"`
-}
+// one or more items to the list of produce.  Note adding an individual
+// item without an array is also supported.
+type ProduceAddRequest []Produce
 
 // ProduceListResponse defines the JSON format for the request to list
-// all of the produce items.  It is identical to the add request, but
-// defined as a separate type for clarity.
-type ProduceListResponse struct {
-	Items []Produce `json:"items"`
-}
+// all of the produce items.
+type ProduceListResponse []Produce
 
-// ProduceAddItemResponse is the repsonse to a single Produce add request.
-// It contains the produce code and the HTTP status for a single add
-// operation.  This is useful in the case of a partial success,
-// so we can see exactly which ones succeeded and failed.
+// ProduceAddItemResponse is the repsonse to a single Produce add request
+// when multiple items are in the add request.  It contains the produce code
+// and the HTTP status for a single add operation.  This is useful in the case
+// of a partial success, so we can see exactly which ones succeeded and failed.
 type ProduceAddItemResponse struct {
 	Code       string `json:"code"`
 	StatusCode int    `json:"status_code"`
@@ -48,9 +44,7 @@ type ProduceAddItemResponse struct {
 // ProduceAddResponse is the repsonse to a Produce add request.  It
 // is an array of items with the produce code and the HTTP status for
 // that operation.
-type ProduceAddResponse struct {
-	Items []ProduceAddItemResponse `json:"items"`
-}
+type ProduceAddResponse []ProduceAddItemResponse
 
 // StatusResponse is the JSON returned for a liveness check as well as
 // for other status notifications such as a successful delete.

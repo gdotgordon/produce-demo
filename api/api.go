@@ -120,36 +120,35 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Unmarshal the request item.  Note adding 0 items is deemed an error.
-	var par types.ProduceAddRequest
+	var items types.ProduceAddRequest
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		a.notifyInternalServerError(w, "error reading request body", err)
 		return
 	}
 
-	// Unmarshal the payload either into a produce item list, or if not,
-	// then try as a single item.  If we try to marshal a single item and
-	// not a ProduceAddRequest, JSON will incorrectly "succeed", so we'll
-	// check for that right below.
-	if err = json.Unmarshal(b, &par); err != nil {
-		writeBadRequestResponse(w, err)
-	}
-
-	if len(par.Items) == 0 {
+	// Unmarshal the payload either into a produce item slice, or if not,
+	// then try as a single item.
+	if err = json.Unmarshal(b, &items); err != nil {
 		// See if this is in fact a single produce item.
 		var prod types.Produce
 		serr := json.Unmarshal(b, &prod)
 		if serr == nil {
-			par.Items = []types.Produce{prod}
+			items = []types.Produce{prod}
 		} else {
-			writeBadRequestResponse(w,
-				errors.New("At least one item must be specifed to add"))
+			writeBadRequestResponse(w, err)
 			return
 		}
 	}
 
+	if len(items) == 0 {
+		writeBadRequestResponse(w,
+			errors.New("At least one item must be specifed to add"))
+		return
+	}
+
 	// Invoke the service to do the add
-	addRes, err := a.service.Add(r.Context(), par.Items)
+	addRes, err := a.service.Add(r.Context(), items)
 
 	if err != nil {
 		a.notifyInternalServerError(w, "server error from Add", err)
@@ -157,7 +156,7 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If there was only one item to add, handle that without the mass response.
-	if len(par.Items) == 1 {
+	if len(items) == 1 {
 		if addRes[0].Err == nil {
 			w.WriteHeader(http.StatusCreated)
 		} else {
@@ -184,7 +183,6 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		restResp[i].StatusCode = errorToStatusCode(v.Err, http.StatusCreated)
 	}
-	restWrapper := types.ProduceAddResponse{Items: restResp}
 
 	// If no failures, return a single created response.
 	if failures == 0 {
@@ -194,7 +192,7 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	// At least one failuire, so we're going to return HTTP 200 along with
 	// the descritpive JSON.
-	b, err = json.Marshal(restWrapper)
+	b, err = json.Marshal(restResp)
 	if err != nil {
 		a.notifyInternalServerError(w, "JSON marshal error", err)
 		return
@@ -226,8 +224,7 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 		a.notifyInternalServerError(w, "error listing items", err)
 	case nil:
 		// List was successful - write HTTP 200
-		resp := types.ProduceListResponse{Items: items}
-		b, err := json.MarshalIndent(resp, "", "  ")
+		b, err := json.MarshalIndent(items, "", "  ")
 		if err != nil {
 			a.notifyInternalServerError(w, "JSON marshal error", err)
 			return

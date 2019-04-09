@@ -83,34 +83,34 @@ func TestAddEndpoint(t *testing.T) {
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{}},
+			req:       []types.Produce{},
 			expStatus: http.StatusBadRequest,
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			req:       []types.Produce{dfltProduce},
 			expStatus: http.StatusCreated,
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			req:       []types.Produce{dfltProduce},
 			asSingle:  true,
 			expStatus: http.StatusCreated,
 		},
 		{
 			url:       produceURL,
 			existing:  []types.Produce{dfltProduce},
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			req:       []types.Produce{dfltProduce},
 			expStatus: http.StatusConflict,
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, secondProduce}},
+			req:       []types.Produce{dfltProduce, secondProduce},
 			expStatus: http.StatusCreated,
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, dfltProduce}},
+			req:       []types.Produce{dfltProduce, dfltProduce},
 			expStatus: http.StatusOK,
 			expRes: []types.ProduceAddItemResponse{
 				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M", StatusCode: 201},
@@ -122,7 +122,7 @@ func TestAddEndpoint(t *testing.T) {
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce, secondProduceBadName}},
+			req:       []types.Produce{dfltProduce, secondProduceBadName},
 			expStatus: http.StatusOK,
 			expRes: []types.ProduceAddItemResponse{
 				types.ProduceAddItemResponse{Code: "A12T-4GH7-QPL9-3N4M", StatusCode: 201},
@@ -134,12 +134,12 @@ func TestAddEndpoint(t *testing.T) {
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduceBadCode}},
+			req:       []types.Produce{dfltProduceBadCode},
 			expStatus: http.StatusBadRequest,
 		},
 		{
 			url:       produceURL,
-			req:       types.ProduceAddRequest{Items: []types.Produce{dfltProduce}},
+			req:       []types.Produce{dfltProduce},
 			servErr:   errors.New("hiya"),
 			expStatus: http.StatusInternalServerError,
 		},
@@ -159,9 +159,9 @@ func TestAddEndpoint(t *testing.T) {
 		var rdr io.Reader
 		var b []byte
 		var err error
-		if v.req.Items != nil {
+		if v.req != nil {
 			if v.asSingle {
-				b, err = json.Marshal(v.req.Items[0])
+				b, err = json.Marshal(v.req[0])
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -185,16 +185,16 @@ func TestAddEndpoint(t *testing.T) {
 		}
 
 		if len(v.expRes) > 0 {
-			var par types.ProduceAddResponse
-			err = json.Unmarshal(rr.Body.Bytes(), &par)
+			var items types.ProduceAddResponse
+			err = json.Unmarshal(rr.Body.Bytes(), &items)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(v.expRes) != len(par.Items) {
+			if len(v.expRes) != len(items) {
 				t.Fatalf("mismatched add response count: %d, %d", len(v.expRes),
-					len(par.Items))
+					len(items))
 			}
-			for i, p := range par.Items {
+			for i, p := range items {
 				if v.expRes[i] != p {
 					t.Fatalf("(%d) unexpected return item: %+v", i, p)
 				}
@@ -317,13 +317,13 @@ func TestListEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if len(v.expRes) != len(ap.Items) {
+			if len(v.expRes) != len(ap) {
 				t.Fatalf("Did not read expected number of list items")
 			}
 
 			cnt := 0
 			for _, v := range v.expRes {
-				for _, w := range ap.Items {
+				for _, w := range ap {
 					if v == w {
 						cnt++
 						break

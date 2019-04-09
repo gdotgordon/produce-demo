@@ -11,7 +11,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+
+	"github.com/gdotgordon/produce-demo/types"
 )
 
 const (
@@ -59,4 +62,24 @@ func getAppAddr(app, port string) (string, error) {
 		log.Fatalf("docker-compose error: failed to get exposed port: %v", err)
 	}
 	return string(res[:len(res)-1]), nil
+}
+
+// ResSorter sorts slices of AddResult.  Sort by key, since it is unique.
+type produceSorter struct {
+	prod []types.Produce
+}
+
+// Len is part of sort.Interface.
+func (ps produceSorter) Len() int {
+	return len(ps.prod)
+}
+
+// Swap is part of sort.Interface.
+func (ps produceSorter) Swap(i, j int) {
+	ps.prod[i], ps.prod[j] = ps.prod[j], ps.prod[i]
+}
+
+// Less is part of sort.Interface.
+func (ps produceSorter) Less(i, j int) bool {
+	return strings.Compare(ps.prod[i].Code, ps.prod[j].Code) < 0
 }
