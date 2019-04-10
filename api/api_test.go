@@ -17,6 +17,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// For the most part, these tests exercise the API layer through the
+// http.TestRecorder.  The various request bodies are created and the
+// response is analyzed.  With the addition of a dummy service, this is
+// a good way to test the API layer in isolation.
+
 var (
 	dfltProduce = types.Produce{
 		Code:      "A12T-4GH7-QPL9-3N4M",
