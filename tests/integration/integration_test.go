@@ -21,6 +21,7 @@ import (
 	"github.com/gdotgordon/produce-demo/types"
 )
 
+// testTypes are the pre-conditions for the test cases
 type testType byte
 
 const (
@@ -46,7 +47,7 @@ func TestMain(m *testing.M) {
 func TestRandGen(t *testing.T) {
 	prods := createRandomProduce(5, 25)
 	if len(prods) != 25 {
-		t.Fatal("wrong array lengthL", len(prods))
+		t.Fatal("wrong array length", len(prods))
 	}
 	for i := 5; i <= 29; i++ {
 		v := prods[i-5]
@@ -84,95 +85,8 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-// Test concurrently adding items, ensure the returned list is correct.
-// Then concurrently delete the items, checking the codes and finally
-// that the list is empty.
-func TestAddListDelete(t *testing.T) {
-	invokeReset(t)
-	items := createRandomProduce(1, 25)
-	cnt := 25
-
-	// Add the items and wait for them to complete.
-	var succCnt uint32
-	var wg sync.WaitGroup
-	for i := range items {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			res := invokeAddSingle(t, items[i])
-			if res == http.StatusCreated {
-				atomic.AddUint32(&succCnt, 1)
-			}
-		}()
-	}
-	wg.Wait()
-
-	if succCnt != uint32(cnt) {
-		t.Fatalf("expected %d success, got %d", cnt, succCnt)
-	}
-
-	// Compare the two lists, sorintg, and converting the incoming list to
-	// canonical.
-	status, litems := invokeListAll(t)
-	if status != http.StatusOK {
-		t.Fatal("list returned unexpcted status", status)
-	}
-	if len(items) != cnt {
-		t.Fatalf("expected %d list items, got %d", cnt, len(items))
-	}
-
-	// Save the keys for the delete test.
-	keys := make([]string, cnt)
-	for i := range items {
-		keys[i] = items[i].Code
-		items[i] = toUpper(items[i])
-	}
-	sort.Sort(produceSorter{items})
-	sort.Sort(produceSorter{litems})
-	for i, v := range items {
-		if v != litems[i] {
-			t.Fatalf("list items don't match: %+v, %+v", v, litems[i])
-		}
-	}
-
-	// Now delete the items, adding one of them twice, to generate a
-	// error return code. No content is the HTTP code on success, not
-	// found on error.
-	var ncCnt uint32
-	var nfCnt uint32
-	var wg2 sync.WaitGroup
-	for i := 0; i <= len(items); i++ {
-		i := i
-		wg2.Add(1)
-		go func() {
-			defer wg2.Done()
-
-			var res int
-			if i == len(items) {
-				// nefarious dduplicate delete
-				res = invokeDelete(t, keys[0])
-			} else {
-				res = invokeDelete(t, keys[i])
-			}
-			switch res {
-			case http.StatusNoContent:
-				atomic.AddUint32(&ncCnt, 1)
-			case http.StatusNotFound:
-				atomic.AddUint32(&nfCnt, 1)
-			}
-		}()
-	}
-	wg2.Wait()
-	if ncCnt != uint32(cnt) {
-		t.Fatalf("expected %d no content, got %d", cnt, ncCnt)
-	}
-	if nfCnt != 1 {
-		t.Fatalf("expected 1 not found, got %d", ncCnt)
-	}
-
-	status, items = invokeListAll(t)
+func TestList(t *testing.T) {
+	status, items := invokeListAll(t)
 	if status != http.StatusOK {
 		t.Fatal("list returned unexpcted status", status)
 	}
@@ -181,13 +95,165 @@ func TestAddListDelete(t *testing.T) {
 	}
 }
 
-func TestList(t *testing.T) {
-	status, items := invokeListAll(t)
-	if status != http.StatusOK {
-		t.Fatal("list returned unexpcted status", status)
-	}
-	if len(items) != 0 {
-		t.Fatal("list was not empty", items)
+// Test concurrently adding items, ensure the returned list is correct.
+// Then concurrently delete the items, checking the codes and finally
+// that the list is empty.
+func TestAddListDelete(t *testing.T) {
+	for c, v := range []struct {
+		ttype          testType // one of the test types defined above
+		cnt            int      // number of items to add
+		numDup         int      // number of duplicate adds
+		numBad         int      // number of bad format adds
+		expAddSucc     uint32   // number of successful adds
+		expAddBadReq   uint32   // number of bad request adds
+		expAddConflict uint32   // number of conflict adds
+		listBeforeCnt  int      // list count before deleting
+		delNCCnt       uint32   // no content count for deletes
+		delNFCnt       uint32   // not found count for deltes
+	}{
+		{
+			ttype:         valid,
+			cnt:           25,
+			expAddSucc:    25,
+			listBeforeCnt: 25,
+			delNCCnt:      25,
+			delNFCnt:      1,
+		},
+		{
+			ttype:          dups,
+			cnt:            25,
+			numDup:         2,
+			expAddSucc:     23,
+			expAddConflict: 2,
+			listBeforeCnt:  23,
+			delNCCnt:       23,
+			delNFCnt:       1,
+		},
+		{
+			ttype:         invalid,
+			cnt:           25,
+			numBad:        2,
+			expAddSucc:    23,
+			expAddBadReq:  2,
+			listBeforeCnt: 23,
+			delNCCnt:      23,
+			delNFCnt:      1,
+		},
+	} {
+		invokeReset(t)
+		items := createRandomProduce(1, v.cnt-v.numDup-v.numBad)
+
+		// Add the items and wait for them to complete.
+		var succCnt uint32
+		var badReqCnt uint32
+		var conflictCnt uint32
+		var wg sync.WaitGroup
+		for i := 0; i < len(items)+v.numDup+v.numBad; i++ {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				var res int
+				if i >= len(items) {
+					if v.expAddBadReq > 0 {
+						bogusItem := items[i-len(items)]
+						bogusItem.Name = "&&&&&&$$$$$$$$$"
+						res = invokeAddSingle(t, bogusItem)
+					} else if v.expAddConflict > 0 {
+						res = invokeAddSingle(t, items[i-len(items)])
+					}
+				} else {
+					res = invokeAddSingle(t, items[i])
+				}
+				switch res {
+				case http.StatusCreated:
+					atomic.AddUint32(&succCnt, 1)
+				case http.StatusBadRequest:
+					atomic.AddUint32(&badReqCnt, 1)
+				case http.StatusConflict:
+					atomic.AddUint32(&conflictCnt, 1)
+				}
+			}()
+		}
+		wg.Wait()
+
+		if succCnt != v.expAddSucc {
+			t.Fatalf("(%d) expected %d success, got %d", c, v.cnt, succCnt)
+		}
+		if badReqCnt != v.expAddBadReq {
+			t.Fatalf("(%d) expected %d bad requests, got %d", c, v.expAddBadReq, badReqCnt)
+		}
+		if conflictCnt != v.expAddConflict {
+			t.Fatalf("(%d) expected %d conflicts, got %d", c, v.expAddConflict, conflictCnt)
+		}
+
+		// Compare the two lists, sorintg, and converting the incoming list to
+		// canonical.
+		status, litems := invokeListAll(t)
+		if status != http.StatusOK {
+			t.Fatalf("(%d) list returned unexpcted status: %d", c, status)
+		}
+		if len(items) != int(v.expAddSucc) {
+			t.Fatalf("(%d) expected %d list items, got %d", c, v.cnt, len(items))
+		}
+
+		// Save the keys for the delete test.
+		keys := make([]string, v.cnt)
+		for i := range items {
+			keys[i] = items[i].Code
+			items[i] = toUpper(items[i])
+		}
+		sort.Sort(produceSorter{items})
+		sort.Sort(produceSorter{litems})
+		for i, v := range items {
+			if v != litems[i] {
+				t.Fatalf("(%d) list items don't match: %+v, %+v", c, v, litems[i])
+			}
+		}
+
+		// Now delete the items, adding one of them twice, to generate a
+		// error return code. No content is the HTTP code on success, not
+		// found on error.
+		var ncCnt uint32
+		var nfCnt uint32
+		var wg2 sync.WaitGroup
+		for i := 0; i <= len(items); i++ {
+			i := i
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+
+				var res int
+				if i == len(items) {
+					// nefarious dduplicate delete
+					res = invokeDelete(t, keys[0])
+				} else {
+					res = invokeDelete(t, keys[i])
+				}
+				switch res {
+				case http.StatusNoContent:
+					atomic.AddUint32(&ncCnt, 1)
+				case http.StatusNotFound:
+					atomic.AddUint32(&nfCnt, 1)
+				}
+			}()
+		}
+		wg2.Wait()
+		if ncCnt != v.delNCCnt {
+			t.Fatalf("(%d) expected %d no content, got %d", c, v.cnt, ncCnt)
+		}
+		if nfCnt != v.delNFCnt {
+			t.Fatalf("(%d) expected 1 not found, got %d", c, ncCnt)
+		}
+
+		status, items = invokeListAll(t)
+		if status != http.StatusOK {
+			t.Fatal("list returned unexpcted status", status)
+		}
+		if len(items) != 0 {
+			t.Fatal("list was not empty", items)
+		}
 	}
 }
 
