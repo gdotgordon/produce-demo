@@ -23,4 +23,4 @@ More on container names later.  But notice that running the above command (or be
 
 To stop the demo, simply type `docker-compose down` or `docker-compose down --rm all` (to remove the image).
 
-Note `docker-compose` will download the image for you from Docker hub, but for reference, the version of the image to use is **gagordon12/produce-demo:1.0**.
+Note `docker-compose` will pull the image for you from Docker hub, but for reference, the version of the image to use is **gagordon12/produce-demo:1.0**.
