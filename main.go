@@ -4,18 +4,26 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/gdotgordon/produce-demo/api"
 	"github.com/gdotgordon/produce-demo/service"
 	"github.com/gdotgordon/produce-demo/store"
+	"github.com/gdotgordon/produce-demo/types"
 	"go.uber.org/zap"
+)
+
+const (
+	seedFile = "seed.json"
 )
 
 var (
@@ -59,7 +67,13 @@ func main() {
 	muxer := http.NewServeMux()
 	service := service.New(store.New(), log)
 	if err := api.Init(ctx, muxer, service, log); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting api: '%s'\n", err)
+		log.Errorf("Error initializing API layer", "error", err)
+		os.Exit(1)
+	}
+
+	// Load the seed items as (required by the spec), from the seed.json file.
+	if err := loadSeedItems(ctx, service, log); err != nil {
+		log.Errorw("Error loading seed items", "error", err)
 		os.Exit(1)
 	}
 
@@ -80,6 +94,34 @@ func main() {
 
 	// Block until we shutdown.
 	waitForShutdown(ctx, srv, log)
+}
+
+func loadSeedItems(ctx context.Context, service service.Service,
+	log *zap.SugaredLogger) error {
+	seedFilePath, _ := os.Executable()
+	seedFilePath = filepath.Dir(seedFilePath) + "/" + seedFile
+	seedFile, err := os.Open(seedFilePath)
+	if err != nil {
+		log.Warnw("Cannot open produce seed file", "file", seedFile, "error", err)
+		return nil
+	}
+	defer seedFile.Close()
+	b, err := ioutil.ReadAll(seedFile)
+	if err != nil {
+		log.Errorw("Error reading produce seed file", "error", err)
+		seedFile.Close()
+		os.Exit(1)
+	}
+	var items []types.Produce
+	if err = json.Unmarshal(b, &items); err != nil {
+		log.Errorw("Error unmarshalling produce seed file", "error", err)
+		os.Exit(1)
+	}
+	addItems, err := service.Add(ctx, items)
+	if len(addItems) == 0 {
+		log.Warn("No seed items loaded")
+	}
+	return err
 }
 
 func waitForShutdown(ctx context.Context, srv *http.Server,

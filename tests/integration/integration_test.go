@@ -87,13 +87,13 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-func TestList(t *testing.T) {
+func TestInitialConditions(t *testing.T) {
 	status, items := invokeListAll(t)
 	if status != http.StatusOK {
 		t.Fatal("list returned unexpcted status", status)
 	}
-	if len(items) != 0 {
-		t.Fatal("list was not empty", items)
+	if len(items) == 0 {
+		t.Fatal("list was empty", items)
 	}
 }
 
