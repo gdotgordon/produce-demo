@@ -1,5 +1,5 @@
 # Start with a full-fledged golang image, but strip it from the final image.
-FROM golang:1.12.2-alpine
+FROM golang:1.12.3-alpine
 
 LABEL maintainer="Gary Gordon <gagordon12@gmail.com>"
 
