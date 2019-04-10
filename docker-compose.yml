@@ -1,0 +1,9 @@
+# This docker-compose script gets our image (either locally or from Docker Hub),
+# and runs the image.
+version: "3.3"
+
+services:
+  produce-demo:
+    image: gagordon12/produce-demo:1.0
+    ports:
+      - '8080'

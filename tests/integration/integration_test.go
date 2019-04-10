@@ -27,7 +27,8 @@ var (
 
 func TestMain(m *testing.M) {
 	// call flag.Parse() here if TestMain uses flags
-	produceAddr, _ = getAppAddr("produce-demo", "8080")
+	produceAddr, _ = getAppAddr("8080", "produce-demo_produce-demo_1",
+		"producedemo_produce-demo_1")
 	os.Exit(m.Run())
 }
 
@@ -56,8 +57,16 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-func getAppAddr(app, port string) (string, error) {
-	res, err := exec.Command("docker", "port", app, port).CombinedOutput()
+func getAppAddr(port string, app ...string) (string, error) {
+	var err error
+	var res []byte
+	for _, a := range app {
+		res, err = exec.Command("docker", "port", a, port).CombinedOutput()
+		if err == nil {
+			break
+		}
+	}
+
 	if err != nil {
 		log.Fatalf("docker-compose error: failed to get exposed port: %v", err)
 	}

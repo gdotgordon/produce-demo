@@ -1,10 +1,10 @@
 #!/bin/bash
-TAG=$(git describe --abbrev=0)
-docker images | grep produce-demo
+function finish {
 set +e
-docker stop produce-demo
-docker rm produce-demo
+docker-compose down
 set -e
-docker run --detach -p 8080 --name produce-demo gagordon12/produce-demo:${TAG}
-docker port produce-demo 8080
+}
+
+trap finish EXIT
+docker-compose up -d
 go test -tags=integration -v -race -count=1 ./tests/integration
