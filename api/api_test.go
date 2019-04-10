@@ -358,6 +358,46 @@ func TestInvalidMethod(t *testing.T) {
 	}
 }
 
+func TestReset(t *testing.T) {
+	for i, v := range []struct {
+		url       string
+		servErr   error
+		expStatus int
+	}{
+		{
+			url:       resetURL,
+			expStatus: http.StatusOK,
+		},
+		{
+			url:       resetURL,
+			servErr:   service.InternalError{Message: "Uh-Oh"},
+			expStatus: http.StatusInternalServerError,
+		},
+	} {
+		d := DummyService{}
+		if v.servErr != nil {
+			d.err = v.servErr
+		}
+
+		api := apiImpl{service: d, log: newLogger(t)}
+		req, err := http.NewRequest(http.MethodGet, resetURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Call the handler for status
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(wrapContext(context.Background(), api.handleReset))
+		handler.ServeHTTP(rr, req)
+
+		// Verify the code and expected body
+		if status := rr.Code; status != v.expStatus {
+			t.Fatalf("(%d) handler returned wrong status code: got %d, expected %d",
+				i, rr.Code, v.expStatus)
+		}
+	}
+}
+
 func TestInit(t *testing.T) {
 	err := Init(context.Background(), http.NewServeMux(), DummyService{},
 		newLogger(t))

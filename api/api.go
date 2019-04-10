@@ -25,6 +25,7 @@ import (
 const (
 	statusURL  = "/v1/status"
 	produceURL = "/v1/produce"
+	resetURL   = "/v1/reset"
 )
 
 // API is the item that dispatches to the endpoint implementations
@@ -42,6 +43,7 @@ func Init(ctx context.Context, mux *http.ServeMux, service service.Service,
 	mux.Handle(statusURL, wrapContext(ctx, ap.getStatus))
 	mux.Handle(produceURL, wrapContext(ctx, ap.handleProduce))
 	mux.Handle(produceURL+"/", wrapContext(ctx, ap.handleProduce))
+	mux.Handle(resetURL, wrapContext(ctx, ap.handleReset))
 	return nil
 }
 
@@ -297,6 +299,14 @@ func (a apiImpl) extractPath(w http.ResponseWriter, r *http.Request,
 		return "", false
 	}
 	return path, true
+}
+
+func (a apiImpl) handleReset(w http.ResponseWriter, r *http.Request) {
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
+	code := errorToStatusCode(a.service.Clear(r.Context()), http.StatusOK)
+	w.WriteHeader(code)
 }
 
 func (a apiImpl) notifyInternalServerError(w http.ResponseWriter, msg string,
