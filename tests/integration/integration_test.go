@@ -6,6 +6,7 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -92,7 +93,8 @@ func TestInitialConditions(t *testing.T) {
 
 // Test concurrently adding items, ensure the returned list is correct.
 // Then concurrently delete the items, checking the codes and finally
-// that the list is empty.
+// that the list is empty.  Testing with both individual and batched add
+// produce requests are trsted.
 func TestAddListDelete(t *testing.T) {
 	for c, v := range []struct {
 		numGood int // number of good items to add
@@ -138,116 +140,19 @@ func TestAddListDelete(t *testing.T) {
 			}
 		}
 
-		// if using blocks, partition items into lists.
-		var blks [][]types.Produce
-		if v.blkSize != 0 {
-			blks = make([][]types.Produce, (len(items)+v.blkSize-1)/v.blkSize)
-			nxt := 0
-			for i := 0; i < len(items); i += v.blkSize {
-				var blen int
-				if i+v.blkSize <= len(items) {
-					blen = v.blkSize
-				} else {
-					blen = len(items) - i
-				}
-				blks[nxt] = items[i : i+blen]
-				nxt++
-			}
+		// Add the items and wait for them to complete.  The code is long
+		// enough that it is moved into a separate function.
+		succCnt, badReqCnt, conflictCnt, err := runAdds(items, v.blkSize)
+		if err != nil {
+			t.Fatalf("(%d) app phas failed: %v", c, err)
 		}
-
-		// Add the items and wait for them to complete.
-		var succCnt uint32
-		var badReqCnt uint32
-		var conflictCnt uint32
-		var wg sync.WaitGroup
-		var addErr error
-
-		// Handle the block adds or the single adds, depending on the config.
-		if v.blkSize != 0 {
-			for i := range blks {
-				// For a block add, the rules are:
-				// - all adds succeed, then a simple 201 Created is returned.
-				// - at least one fails, a 200 is returned, and the response body
-				// is an array of ProduceAddRepsonses, each of which contains
-				// the produce code and it's corresponding HTTP result.
-				i := i
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-
-					if addErr != nil {
-						return
-					}
-					status, resp, err := invokeAdd(blks[i])
-					if err != nil {
-						addErr = err
-						return
-					}
-
-					switch status {
-					case http.StatusOK:
-						// There is an array of results for HTTP 200.
-						if resp == nil {
-							t.Fatalf("Missing array for HTTP 200 response")
-						}
-						for _, r := range resp {
-							switch r.StatusCode {
-							case http.StatusCreated:
-								atomic.AddUint32(&succCnt, 1)
-							case http.StatusBadRequest:
-								atomic.AddUint32(&badReqCnt, 1)
-							case http.StatusConflict:
-								atomic.AddUint32(&conflictCnt, 1)
-							}
-						}
-					case http.StatusCreated:
-						atomic.AddUint32(&succCnt, uint32(len(blks[i])))
-					case http.StatusBadRequest:
-						atomic.AddUint32(&badReqCnt, 1)
-					case http.StatusConflict:
-						atomic.AddUint32(&conflictCnt, 1)
-					}
-				}()
-				wg.Wait()
-			}
-		} else {
-			for i := range items {
-				i := i
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-
-					if addErr != nil {
-						return
-					}
-					status, err := invokeAddSingle(items[i])
-					if err != nil {
-						addErr = err
-						return
-					}
-					switch status {
-					case http.StatusCreated:
-						atomic.AddUint32(&succCnt, 1)
-					case http.StatusBadRequest:
-						atomic.AddUint32(&badReqCnt, 1)
-					case http.StatusConflict:
-						atomic.AddUint32(&conflictCnt, 1)
-					}
-				}()
-			}
-			wg.Wait()
-			if addErr != nil {
-				t.Fatalf("error occurred during add phase: %v", addErr)
-			}
-		}
-
-		if int(succCnt) != v.numGood {
+		if succCnt != v.numGood {
 			t.Fatalf("(%d) expected %d success, got %d", c, v.numGood, succCnt)
 		}
-		if int(badReqCnt) != v.numBad {
+		if badReqCnt != v.numBad {
 			t.Fatalf("(%d) expected %d bad requests, got %d", c, v.numBad, badReqCnt)
 		}
-		if int(conflictCnt) != v.numDup {
+		if conflictCnt != v.numDup {
 			t.Fatalf("(%d) expected %d conflicts, got %d", c, v.numDup, conflictCnt)
 		}
 
@@ -335,6 +240,121 @@ func TestAddListDelete(t *testing.T) {
 			t.Fatal("list was not empty", items)
 		}
 	}
+}
+
+// Called from TestAddListDelete to add the produce items.
+func runAdds(items []types.Produce, blkSize int) (int, int, int, error) {
+	// if using blocks, partition items into lists.
+	var blks [][]types.Produce
+	if blkSize != 0 {
+		blks = partitionBlocks(items, blkSize)
+	}
+
+	// Add the items and wait for them to complete.
+	var succCnt uint32
+	var badReqCnt uint32
+	var conflictCnt uint32
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var addErr error
+
+	// Handle the block adds or the single adds, depending on the config.
+	if blkSize != 0 {
+		for i := range blks {
+			// For a block add, the rules are:
+			// - all adds succeed, then a simple 201 Created is returned.
+			// - at least one fails, a 200 is returned, and the response body
+			// is an array of ProduceAddRepsonses, each of which contains
+			// the produce code and it's corresponding HTTP result.
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				status, resp, err := invokeAdd(blks[i])
+				if err != nil {
+					mu.Lock()
+					addErr = err
+					mu.Unlock()
+					return
+				}
+				switch status {
+				case http.StatusOK:
+					// There is an array of results for HTTP 200.
+					if resp == nil {
+						mu.Lock()
+						addErr = errors.New("Block add, no body for HTTP 200 response")
+						mu.Unlock()
+						return
+					}
+					for _, r := range resp {
+						switch r.StatusCode {
+						case http.StatusCreated:
+							atomic.AddUint32(&succCnt, 1)
+						case http.StatusBadRequest:
+							atomic.AddUint32(&badReqCnt, 1)
+						case http.StatusConflict:
+							atomic.AddUint32(&conflictCnt, 1)
+						}
+					}
+				case http.StatusCreated:
+					atomic.AddUint32(&succCnt, uint32(len(blks[i])))
+				case http.StatusBadRequest:
+					atomic.AddUint32(&badReqCnt, 1)
+				case http.StatusConflict:
+					atomic.AddUint32(&conflictCnt, 1)
+				}
+			}()
+			wg.Wait()
+		}
+	} else {
+		for i := range items {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				if addErr != nil {
+					return
+				}
+				status, err := invokeAddSingle(items[i])
+				if err != nil {
+					addErr = err
+					return
+				}
+				switch status {
+				case http.StatusCreated:
+					atomic.AddUint32(&succCnt, 1)
+				case http.StatusBadRequest:
+					atomic.AddUint32(&badReqCnt, 1)
+				case http.StatusConflict:
+					atomic.AddUint32(&conflictCnt, 1)
+				}
+			}()
+		}
+		wg.Wait()
+		if addErr != nil {
+			return 0, 0, 0, addErr
+		}
+	}
+	return int(succCnt), int(badReqCnt), int(conflictCnt), addErr
+}
+
+// Called during TestAddListDelete to add the produce items.
+func partitionBlocks(items []types.Produce, blkSize int) [][]types.Produce {
+	blks := make([][]types.Produce, (len(items)+blkSize-1)/blkSize)
+	nxt := 0
+	for i := 0; i < len(items); i += blkSize {
+		var blen int
+		if i+blkSize <= len(items) {
+			blen = blkSize
+		} else {
+			blen = len(items) - i
+		}
+		blks[nxt] = items[i : i+blen]
+		nxt++
+	}
+	return blks
 }
 
 func getAppAddr(port string, app ...string) (string, error) {
