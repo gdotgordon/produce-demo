@@ -23,15 +23,6 @@ import (
 	"github.com/gdotgordon/produce-demo/types"
 )
 
-// testTypes are the pre-conditions for the test cases
-type testType byte
-
-const (
-	valid testType = iota
-	dups
-	invalid
-)
-
 var (
 	produceAddr string
 	prodClient  *http.Client
@@ -87,7 +78,10 @@ func TestStatus(t *testing.T) {
 }
 
 func TestInitialConditions(t *testing.T) {
-	status, items := invokeListAll(t)
+	status, items, err := invokeListAll()
+	if err != nil {
+		t.Fatal("invoke list error:", err)
+	}
 	if status != http.StatusOK {
 		t.Fatal("list returned unexpcted status", status)
 	}
@@ -101,138 +95,216 @@ func TestInitialConditions(t *testing.T) {
 // that the list is empty.
 func TestAddListDelete(t *testing.T) {
 	for c, v := range []struct {
-		ttype          testType // one of the test types defined above
-		cnt            int      // number of items to add
-		numDup         int      // number of duplicate adds
-		numBad         int      // number of bad format adds
-		expAddSucc     uint32   // number of successful adds
-		expAddBadReq   uint32   // number of bad request adds
-		expAddConflict uint32   // number of conflict adds
-		listBeforeCnt  int      // list count before deleting
-		delNCCnt       uint32   // no content count for deletes
-		delNFCnt       uint32   // not found count for deltes
+		numGood int // number of good items to add
+		numDup  int // number of duplicate adds
+		numBad  int // number of bad format adds
+		blkSize int // invoke adds in blocks
 	}{
 		{
-			ttype:         valid,
-			cnt:           25,
-			expAddSucc:    25,
-			listBeforeCnt: 25,
-			delNCCnt:      25,
-			delNFCnt:      1,
+			numGood: 25,
 		},
 		{
-			ttype:          dups,
-			cnt:            25,
-			numDup:         2,
-			expAddSucc:     23,
-			expAddConflict: 2,
-			listBeforeCnt:  23,
-			delNCCnt:       23,
-			delNFCnt:       1,
+			numGood: 25,
+			blkSize: 6,
 		},
 		{
-			ttype:         invalid,
-			cnt:           25,
-			numBad:        2,
-			expAddSucc:    23,
-			expAddBadReq:  2,
-			listBeforeCnt: 23,
-			delNCCnt:      23,
-			delNFCnt:      1,
+			numGood: 25,
+			blkSize: 6,
+			numDup:  2,
+			numBad:  3,
+		},
+		{
+			numGood: 25,
+			numDup:  2,
+			numBad:  3,
+		},
+		{
+			numGood: 200,
+			blkSize: 7,
+			numDup:  13,
+			numBad:  11,
 		},
 	} {
 		invokeReset(t)
-		items := createRandomProduce(1, v.cnt-v.numDup-v.numBad)
+		items := createRandomProduce(1, v.numGood)
+		if v.numDup > 0 {
+			items = append(items, items[:v.numDup]...)
+		}
+		if v.numBad > 0 {
+			for i := 0; i < v.numBad; i++ {
+				cp := items[i]
+				cp.Name = "@@@@%%%%$$$$$!!!!!"
+				items = append(items, cp)
+			}
+		}
+
+		// if using blocks, partition items into lists.
+		var blks [][]types.Produce
+		if v.blkSize != 0 {
+			blks = make([][]types.Produce, (len(items)+v.blkSize-1)/v.blkSize)
+			nxt := 0
+			for i := 0; i < len(items); i += v.blkSize {
+				var blen int
+				if i+v.blkSize <= len(items) {
+					blen = v.blkSize
+				} else {
+					blen = len(items) - i
+				}
+				blks[nxt] = items[i : i+blen]
+				nxt++
+			}
+		}
 
 		// Add the items and wait for them to complete.
 		var succCnt uint32
 		var badReqCnt uint32
 		var conflictCnt uint32
 		var wg sync.WaitGroup
-		for i := 0; i < len(items)+v.numDup+v.numBad; i++ {
-			i := i
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		var addErr error
 
-				var res int
-				if i >= len(items) {
-					if v.expAddBadReq > 0 {
-						bogusItem := items[i-len(items)]
-						bogusItem.Name = "&&&&&&$$$$$$$$$"
-						res = invokeAddSingle(t, bogusItem)
-					} else if v.expAddConflict > 0 {
-						res = invokeAddSingle(t, items[i-len(items)])
+		// Handle the block adds or the single adds, depending on the config.
+		if v.blkSize != 0 {
+			for i := range blks {
+				// For a block add, the rules are:
+				// - all adds succeed, then a simple 201 Created is returned.
+				// - at least one fails, a 200 is returned, and the response body
+				// is an array of ProduceAddRepsonses, each of which contains
+				// the produce code and it's corresponding HTTP result.
+				i := i
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+
+					if addErr != nil {
+						return
 					}
-				} else {
-					res = invokeAddSingle(t, items[i])
-				}
-				switch res {
-				case http.StatusCreated:
-					atomic.AddUint32(&succCnt, 1)
-				case http.StatusBadRequest:
-					atomic.AddUint32(&badReqCnt, 1)
-				case http.StatusConflict:
-					atomic.AddUint32(&conflictCnt, 1)
-				}
-			}()
-		}
-		wg.Wait()
+					status, resp, err := invokeAdd(blks[i])
+					if err != nil {
+						addErr = err
+						return
+					}
 
-		if succCnt != v.expAddSucc {
-			t.Fatalf("(%d) expected %d success, got %d", c, v.cnt, succCnt)
+					switch status {
+					case http.StatusOK:
+						// There is an array of results for HTTP 200.
+						if resp == nil {
+							t.Fatalf("Missing array for HTTP 200 response")
+						}
+						for _, r := range resp {
+							switch r.StatusCode {
+							case http.StatusCreated:
+								atomic.AddUint32(&succCnt, 1)
+							case http.StatusBadRequest:
+								atomic.AddUint32(&badReqCnt, 1)
+							case http.StatusConflict:
+								atomic.AddUint32(&conflictCnt, 1)
+							}
+						}
+					case http.StatusCreated:
+						atomic.AddUint32(&succCnt, uint32(len(blks[i])))
+					case http.StatusBadRequest:
+						atomic.AddUint32(&badReqCnt, 1)
+					case http.StatusConflict:
+						atomic.AddUint32(&conflictCnt, 1)
+					}
+				}()
+				wg.Wait()
+			}
+		} else {
+			for i := range items {
+				i := i
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+
+					if addErr != nil {
+						return
+					}
+					status, err := invokeAddSingle(items[i])
+					if err != nil {
+						addErr = err
+						return
+					}
+					switch status {
+					case http.StatusCreated:
+						atomic.AddUint32(&succCnt, 1)
+					case http.StatusBadRequest:
+						atomic.AddUint32(&badReqCnt, 1)
+					case http.StatusConflict:
+						atomic.AddUint32(&conflictCnt, 1)
+					}
+				}()
+			}
+			wg.Wait()
+			if addErr != nil {
+				t.Fatalf("error occurred during add phase: %v", addErr)
+			}
 		}
-		if badReqCnt != v.expAddBadReq {
-			t.Fatalf("(%d) expected %d bad requests, got %d", c, v.expAddBadReq, badReqCnt)
+
+		if int(succCnt) != v.numGood {
+			t.Fatalf("(%d) expected %d success, got %d", c, v.numGood, succCnt)
 		}
-		if conflictCnt != v.expAddConflict {
-			t.Fatalf("(%d) expected %d conflicts, got %d", c, v.expAddConflict, conflictCnt)
+		if int(badReqCnt) != v.numBad {
+			t.Fatalf("(%d) expected %d bad requests, got %d", c, v.numBad, badReqCnt)
+		}
+		if int(conflictCnt) != v.numDup {
+			t.Fatalf("(%d) expected %d conflicts, got %d", c, v.numDup, conflictCnt)
 		}
 
 		// Compare the two lists, sorintg, and converting the incoming list to
 		// canonical.
-		status, litems := invokeListAll(t)
+		status, litems, err := invokeListAll()
+		if err != nil {
+			t.Fatal("error listing items", err)
+		}
 		if status != http.StatusOK {
 			t.Fatalf("(%d) list returned unexpcted status: %d", c, status)
 		}
-		if len(items) != int(v.expAddSucc) {
-			t.Fatalf("(%d) expected %d list items, got %d", c, v.cnt, len(items))
+		if len(litems) != int(v.numGood) {
+			t.Fatalf("(%d) expected %d list items, got %d", c, v.numGood, len(litems))
 		}
 
 		// Save the keys for the delete test.
-		keys := make([]string, v.cnt)
+		keys := make([]string, len(items))
 		for i := range items {
 			keys[i] = items[i].Code
-			items[i] = toUpper(items[i])
 		}
-		sort.Sort(produceSorter{items})
+
+		goodItems := make([]types.Produce, v.numGood)
+		copy(goodItems, items)
+		for i := range goodItems {
+			goodItems[i] = toUpper(items[i])
+		}
+		sort.Sort(produceSorter{goodItems})
 		sort.Sort(produceSorter{litems})
-		for i, v := range items {
+		for i, v := range goodItems {
 			if v != litems[i] {
 				t.Fatalf("(%d) list items don't match: %+v, %+v", c, v, litems[i])
 			}
 		}
-
 		// Now delete the items, adding one of them twice, to generate a
 		// error return code. No content is the HTTP code on success, not
 		// found on error.
 		var ncCnt uint32
 		var nfCnt uint32
 		var wg2 sync.WaitGroup
-		for i := 0; i <= len(items); i++ {
+		var delErr error
+		var dmu sync.Mutex
+		for i := 0; i < len(items); i++ {
 			i := i
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
 
-				var res int
-				if i == len(items) {
-					// nefarious dduplicate delete
-					res = invokeDelete(t, keys[0])
-				} else {
-					res = invokeDelete(t, keys[i])
+				dstatus, err := invokeDelete(keys[i])
+				if err != nil {
+					fmt.Println("del err", err, i)
+					dmu.Lock()
+					delErr = err
+					dmu.Unlock()
+					return
 				}
-				switch res {
+				switch dstatus {
 				case http.StatusNoContent:
 					atomic.AddUint32(&ncCnt, 1)
 				case http.StatusNotFound:
@@ -241,14 +313,21 @@ func TestAddListDelete(t *testing.T) {
 			}()
 		}
 		wg2.Wait()
-		if ncCnt != v.delNCCnt {
-			t.Fatalf("(%d) expected %d no content, got %d", c, v.cnt, ncCnt)
-		}
-		if nfCnt != v.delNFCnt {
-			t.Fatalf("(%d) expected 1 not found, got %d", c, ncCnt)
+		if delErr != nil {
+			t.Fatalf("error occurred during delete phase: %v", delErr)
 		}
 
-		status, items = invokeListAll(t)
+		if int(ncCnt) != v.numGood {
+			t.Fatalf("(%d) expected %d no content, got %d", c, v.numGood, ncCnt)
+		}
+		if int(nfCnt) != v.numDup+v.numBad {
+			t.Fatalf("(%d) expected %d not found, got %d", c, v.numDup+v.numBad, nfCnt)
+		}
+
+		status, items, err = invokeListAll()
+		if err != nil {
+			t.Fatal("error listing items", err)
+		}
 		if status != http.StatusOK {
 			t.Fatal("list returned unexpcted status", status)
 		}
@@ -275,20 +354,20 @@ func getAppAddr(port string, app ...string) (string, error) {
 }
 
 // Form of add that takes an array of Produce
-func invokeAdd(t *testing.T, items types.ProduceAddRequest) (int, types.ProduceAddResponse) {
+func invokeAdd(items types.ProduceAddRequest) (int, types.ProduceAddResponse, error) {
 	b, err := json.MarshalIndent(items, "", "  ")
 	if err != nil {
-		t.Fatal("add error marshaling request", err)
+		return 0, nil, err
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+produceAddr+"/v1/produce",
 		bytes.NewReader(b))
 	if err != nil {
-		t.Fatal("list all error creating request", err)
+		return 0, nil, err
 	}
 
 	resp, err := prodClient.Do(req)
 	if err != nil {
-		t.Fatal("list all returned unexpcted error", err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 
@@ -297,74 +376,74 @@ func invokeAdd(t *testing.T, items types.ProduceAddRequest) (int, types.ProduceA
 	if resp.StatusCode == http.StatusOK {
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			t.Fatal("list all error reading body", err)
+			return 0, nil, err
 		}
 		if err = json.Unmarshal(body, &respItems); err != nil {
-			t.Fatal("list all returned unexpcted error", err)
+			return 0, nil, err
 		}
 	}
-	return resp.StatusCode, respItems
+	return resp.StatusCode, respItems, nil
 }
 
 // Form of add that takes a single Produce item
-func invokeAddSingle(t *testing.T, item types.Produce) int {
+func invokeAddSingle(item types.Produce) (int, error) {
 	b, err := json.MarshalIndent(item, "", "  ")
 	if err != nil {
-		t.Fatal("add error marshaling request", err)
+		return 0, err
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+produceAddr+"/v1/produce",
 		bytes.NewReader(b))
 	if err != nil {
-		t.Fatal("list all error creating request", err)
+		return 0, err
 	}
 
 	resp, err := prodClient.Do(req)
 	if err != nil {
-		t.Fatal("list all returned unexpcted error", err)
+		return 0, err
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode
+	return resp.StatusCode, nil
 }
 
-func invokeDelete(t *testing.T, code string) int {
+func invokeDelete(code string) (int, error) {
 	req, err := http.NewRequest(http.MethodDelete,
 		"http://"+produceAddr+"/v1/produce/"+code, nil)
 	if err != nil {
-		t.Fatal("delete error creating request", err)
+		return 0, err
 	}
 
 	resp, err := prodClient.Do(req)
 	if err != nil {
-		t.Fatal("delete returned unexpcted error", err)
+		return 0, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode
+	return resp.StatusCode, nil
 }
 
-func invokeListAll(t *testing.T) (int, types.ProduceListResponse) {
+func invokeListAll() (int, types.ProduceListResponse, error) {
 	req, err := http.NewRequest(http.MethodGet, "http://"+produceAddr+"/v1/produce", nil)
 	if err != nil {
-		t.Fatal("list all error creating request", err)
+		return 0, nil, err
 	}
 
 	resp, err := prodClient.Do(req)
 	if err != nil {
-		t.Fatal("list all returned unexpcted error", err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatal("list all error reading body", err)
+		return 0, nil, err
 	}
 	var items types.ProduceListResponse
 
 	if resp.StatusCode == http.StatusOK {
 		if err = json.Unmarshal(body, &items); err != nil {
-			t.Fatal("list all returned unexpcted error", err)
+			return 0, nil, err
 		}
 	}
-	return resp.StatusCode, items
+	return resp.StatusCode, items, nil
 }
 
 func invokeReset(t *testing.T) {
