@@ -39,6 +39,16 @@ func TestUSDConversion(t *testing.T) {
 			mstr:  "$3.00",
 		},
 		{
+			input: ".50",
+			value: USD(50),
+			mstr:  "$0.50",
+		},
+		{
+			input: "$.50",
+			value: USD(50),
+			mstr:  "$0.50",
+		},
+		{
 			input: "0.72",
 			value: USD(72),
 			mstr:  "$0.72",
@@ -50,6 +60,11 @@ func TestUSDConversion(t *testing.T) {
 		},
 		{
 			input: "$0.00",
+			value: USD(0),
+			mstr:  "$0.00",
+		},
+		{
+			input: ".00",
 			value: USD(0),
 			mstr:  "$0.00",
 		},

@@ -17,7 +17,7 @@ var (
 	// part with no whole number part must strt with as '0', i.e. "0.7"
 	// and not ".7".
 	// https://www.regular-expressions.info/unicode.html#prop
-	usdExp = regexp.MustCompile(`^\"\$?\d*.(\.\d{1,2})?\"$`)
+	usdExp = regexp.MustCompile(`^\"\$?\d*.(\.\d{1,2})?\"$|^\"\$?(\.\d{1,2})?\"$`)
 )
 
 // USD represents US Dollars by storing the total number of cents as an
@@ -56,11 +56,13 @@ func (d *USD) UnmarshalJSON(b []byte) error {
 		}
 		value = 100 * uint32(n)
 	} else {
-		n, err = strconv.ParseUint(str[:ndx], 10, 32)
-		if err != nil {
-			return errors.New("invalid USD format: " + string(b))
+		if str[0] != '.' {
+			n, err = strconv.ParseUint(str[:ndx], 10, 32)
+			if err != nil {
+				return errors.New("invalid USD format: " + string(b))
+			}
+			value = 100 * uint32(n)
 		}
-		value = 100 * uint32(n)
 		frac := str[ndx+1:]
 		n, err = strconv.ParseUint(str[ndx+1:], 10, 32)
 		if err != nil {
