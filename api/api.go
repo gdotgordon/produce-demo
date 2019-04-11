@@ -101,8 +101,11 @@ func (a *apiImpl) handleProduce(w http.ResponseWriter, r *http.Request) {
 // of the requests fail, each will have the proper HTTP status, but again,
 // HTTP 200 will be returned.
 //
+// An attempt to add an item already present generates HTTP 409 (Conflict).
+//
 // For individual items added, we do support incoming JSON for a single
-// Produce item not enclosed in parentheses.
+// Produce item not enclosed in an array.
+//
 // Since this API is arguably not purely Restful, it is a topic where ten
 // different sources propose ten different ways of doing it, so I picked a
 // reasonable one that somewhat stays within REST semantics.
@@ -205,7 +208,8 @@ func (a apiImpl) handleAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 // The Get Rest handler simply lists all the items in the database.
-// It is valid and meaningful to return an empty array.
+// It is valid and meaningful to return an empty array.  It normally
+// returns HTTP 200.
 func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -242,7 +246,10 @@ func (a apiImpl) handleGet(w http.ResponseWriter, r *http.Request) {
 // The delete endpoint contains the proudce code as the last part of the
 // URL path.  Query strings ar etypically for modfiers, whereas putting
 // it as the last component of the path is more Restful, as it is the
-// name pof the resource.
+// name of the resource.
+//
+// A 204 code (No Content) is returned if successful, 404 if not found,
+// 400 if syntax is incorrect.
 func (a apiImpl) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		defer r.Body.Close()
