@@ -5,5 +5,11 @@ version: "3.3"
 services:
   produce-demo:
     image: gagordon12/produce-demo:1.0
+    container_name: produce-demo
+    networks:
+      test:
     ports:
       - '8080'
+
+networks:
+  test:

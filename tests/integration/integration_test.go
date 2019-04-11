@@ -39,8 +39,7 @@ var (
 
 func TestMain(m *testing.M) {
 	// call flag.Parse() here if TestMain uses flags
-	produceAddr, _ = getAppAddr("8080", "produce-demo_produce-demo_1",
-		"producedemo_produce-demo_1")
+	produceAddr, _ = getAppAddr("8080", "produce-demo")
 	prodClient = &http.Client{}
 	os.Exit(m.Run())
 }
