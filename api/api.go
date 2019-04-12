@@ -1,7 +1,7 @@
 // Package api is the endpoint implementation for the produce service.
 // The HTTP endpoint implmentations are here.  This package deals with
 // unmarshaling and marshaling payloads, dispatching to the service (which is
-// itself contains an instance of the storee), processing those errors,
+// itself contains an instance of the store), processing those errors,
 // and implementing proper REST semantics.
 package api
 

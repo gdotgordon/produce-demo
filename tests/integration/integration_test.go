@@ -5,6 +5,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,16 +79,140 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-func TestInitialConditions(t *testing.T) {
-	status, items, err := invokeListAll()
-	if err != nil {
-		t.Fatal("invoke list error:", err)
+// While the test following this one is more concerned with the exercising
+// various add/list/delete sceanrios in a structured and predictable way,
+// the purpose of this test is to launch all three operation types concurrently,
+// and ensure that everything works well and ends in the expected state.
+func TestConcurrency(t *testing.T) {
+	invokeReset(t)
+	done := make(chan struct{})
+
+	// Create pairs of items to add.
+	itemCnt := 100
+	items := createRandomProduce(1, itemCnt)
+	partitions := partitionBlocks(items, 2)
+
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var gotError uint32
+	var addCnt uint32
+
+	// Fire off a goroutine that gets (lists) all the items and then sleeps,
+	// exiting either when it gets 0 items, or is cancelled.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			status, _, err := invokeListAll()
+			if err != nil {
+				atomic.AddUint32(&gotError, 1)
+				close(done)
+				return
+			}
+			if status != http.StatusOK {
+				atomic.AddUint32(&gotError, 1)
+				close(done)
+				return
+			}
+			if atomic.LoadUint32(&addCnt) == uint32(len(items)) {
+				close(done)
+				return
+			}
+
+			tick := time.NewTicker(50 * time.Millisecond)
+			select {
+			case <-tick.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Fire off a goroutine for each produce code that keeps trying
+	// until it successfully deletes it.
+	for i := len(items) - 1; i >= 0; i-- {
+		wg.Add(1)
+		code := items[i].Code
+		go func() {
+			defer wg.Done()
+
+			for {
+				tick := time.NewTicker(200 * time.Millisecond)
+				select {
+				case <-tick.C:
+				case <-ctx.Done():
+					return
+				}
+
+				status, err := invokeDelete(code)
+				if err != nil {
+					atomic.AddUint32(&gotError, 1)
+					return
+				}
+
+				switch status {
+				case http.StatusNoContent:
+					return
+				case http.StatusNotFound:
+				default:
+					atomic.AddUint32(&gotError, 1)
+					return
+				}
+			}
+		}()
 	}
-	if status != http.StatusOK {
-		t.Fatal("list returned unexpcted status", status)
+
+	// Finally, fire off the goroutines that add the pairs of items.
+	for i := range partitions {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Let the delete and list get started first
+			tick := time.NewTicker(500 * time.Millisecond)
+			select {
+			case <-tick.C:
+			case <-ctx.Done():
+				return
+			}
+			status, _, err := invokeAdd(partitions[i])
+			if err != nil {
+				atomic.AddUint32(&gotError, 1)
+				return
+			}
+
+			switch status {
+			case http.StatusCreated:
+				atomic.AddUint32(&addCnt, 2)
+				return
+			default:
+				atomic.AddUint32(&gotError, 1)
+				return
+			}
+		}()
 	}
-	if len(items) == 0 {
-		fmt.Printf("*****Warning, list was empty, please restart server before testing.")
+
+	tkr := time.NewTicker(10 * time.Second)
+	select {
+	case <-done:
+	case <-tkr.C:
+		cancel()
+	}
+
+	wg.Wait()
+	_, res, _ := invokeListAll()
+
+	if gotError != 0 {
+		t.Fatal("unexpected error(s)")
+	}
+	if len(res) != 0 {
+		t.Fatal("list length was", len(res))
+	}
+	if int(addCnt) != itemCnt {
+		t.Fatal("item add count was", addCnt, "expected", itemCnt)
 	}
 }
 

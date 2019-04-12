@@ -32,9 +32,9 @@ Note `docker-compose` will pull the image for you from Docker hub, but for refer
 
 To summarize, here are the steps:
 1. `docker-compose up`
-2. `docker ps` to find the ephmeral port to connect to the server, e.g "0.0.0.0:32874" means you can use "localhost:32874"
+2. `docker ps` to find the ephemeral port to connect to the server, e.g "0.0.0.0:32874" means you can use "localhost:32874"
 3. Use a tool like Postman to invoke the endpoints.
-4 `docker-compose down`
+4. `docker-compose down`
 
 ### Tests
 To run the unit tests, you don't need the container running, just run `go test -race ./...` from the top-level directory.
@@ -75,11 +75,15 @@ The JSON for such an item would look as follows:
 }
  ```
 ## The API
-Three operations are supported, Add (one or more) produce, delete a produce item, or list all produce
+Three operations are supported, Add (one or more) produce, delete a produce item, or list all produce.
+
+Note, there are also endpoints to check liveness (/v1/status) and clear the database (v1/reset).
 
 ### Add
 endpoint: POST to /v1/produce
+
 payload: JSON for a single Produce item as shown above, or an array of Produce items
+
 HTTP return codes:
 - 200 (OK) for requests with multiple produce items, but mixed results storing them (detailed discussion below)
 - 201 (Created) for a successful update for single item or an array where all updates succeeded
@@ -143,9 +147,12 @@ Note that two of the items are invalid (one bad code, one bad name, plus we've s
 
 ### List Items
 endpoint: GET to /v1/produce
+
 payload: none
+
 returns: a JSON array of all the items in the database.  Note it is legitimate to get a response with zero items, and this is not deemed an error.  It *would* be an error if a specific resource were requested, but not found.  This is a matter
 of interpretation, I suppose, but I am documenting my take on it and justification.
+
 HTTP return codes:
 - 200 (OK) list successfully returned
 - 500 (Internal Server Error) typically won't happen unless there is a system failure
@@ -183,7 +190,9 @@ Sample response:
 
 ### Delete Items
 endpoint: DELETE to /v1/produce/{produce code} example: /v1/produce/YRT6-72AS-K736-L4AR
+
 payload: none
+
 HTTP return codes:
 - 204 No Content if successfully deleted
 - 400 Bad Request if request is syntactically invalid
@@ -193,7 +202,7 @@ HTTP return codes:
 Note: another approach would be to include the Produce code as a query parameter, but in REST, it is common to have the resource itself be part of the actual URL, where the query parameters are more for modifiers.
 
 ## Architecture and Code Layout
-The code has a main package which starts the HTTP server.  This package creates a signal handler which is tied to a contex cancel function.  This allows for clean shutdwon.  THe main code creates a *service* object, which is a wrapper around the store package, which is the mock database.  This service is then passed to the *api* layer, for use with the mux'ed incoming requests.
+The code has a main package which starts the HTTP server.  This package creates a signal handler which is tied to a context cancel function.  This allows for clean shutdown.  The main code creates a *service* object, which is a wrapper around the store package, which is the mock database.  This service is then passed to the *api* layer, for use with the mux'ed incoming requests.
 
 Here is a more-specific roadmap of the packages:
 
@@ -201,13 +210,13 @@ Here is a more-specific roadmap of the packages:
 Contains the definitions for the Produce item, the USD custom data type and the Request and Response Objects for the various REST invocations.
 
 ### *api* package
-Contains the HTTP handlers for the various endpoints.  Primary responsibility is to unmarshal incoming requests, convert them to Go objects, and pass them off to the service layer, get the repsonses back from the service layer, convert any errors (or not) to appropriate HTTP status codes and send them back to the HTTP layer.
+Contains the HTTP handlers for the various endpoints.  Primary responsibility is to unmarshal incoming requests, convert them to Go objects, and pass them off to the service layer, get the responses back from the service layer, convert any errors (or not) to appropriate HTTP status codes and send them back to the HTTP layer.
 
 ### *service* package
-Takes the request Go object (if any), does semantic checks for correctness (e.g. valid Produce Code format), and launches goroutines that talk to the server layer, gets the results back, and passes any errors or return objects back to the api layer for conversion to an HTTP response.  The service implemnts the *Service* interface, but the ProduceService is returned not masked in an interface, as it is not an object which is meant to be replaced.  The presence of the interface facilitates creating mocks for testing.
+Takes the request Go object (if any), does semantic checks for correctness (e.g. valid Produce Code format), and launches goroutines that talk to the storage layer, gets the results back, and passes any errors or return objects back to the api layer for conversion to an HTTP response.  The service implements the *Service* interface, but the ProduceService is returned not masked in an interface, as it is not an object which is meant to be replaced.  The presence of the interface facilitates creating mocks for testing.
 
 ### *storage* package
 Implements the store using a hash map.  The is no ordering to the objects when retrieved, which is reasonable, as any application could choose to sort the results based on name, code, price, whatever.  Note there is a *ProduceStore* interface, and `New()` returns a concrete implementation, which is hidden from the caller.  This  facilitates swapping in a real database without changing the code.  So the reason for using an interface here is somewhat different than the service package.
 
 ## A Note on Contexts
-If you look at the API, you'll note that I've pretty much followed the rule of passing the context.Context with the cancel on signal around as the first parameter.  The intent is to not have goroutines lock up and allow for a clean shutdown.  Typically, I like to listen for `ctx.Done()` in a select statement, or depend on a layer I call to handle the cancel appropriately.  In the current program, the goroutines that communicate with the store pass this context to the store on every call.  A real database that is well-written would honor those cancels.  Here, however, the calls to the store only block for however long it takes to get the RW Mutex, which is minimal.  So in summary, the service invokes the store with a blocking call tht returns quickly, and given the API is not channel-based, it is not possible to select on both the context and a response form the server - this is a shortcoming of Go, IMO.  On the other hand, passing the context off to the store and asking it to not lock up if a context cancel occurs is a reasonable expectation. 
+If you look at the API, you'll note that I've pretty much followed the rule of passing the context.Context with the cancel on signal around as the first parameter.  The intent is to not have goroutines lock up and allow for a clean shutdown.  Typically, I like to listen for `ctx.Done()` in a select statement, or depend on a layer I call to handle the cancel appropriately.  In the current program, the goroutines that communicate with the store pass this context to the store on every call.  A real database that is well-written would honor those cancels.  Here, however, the calls to the store only block for however long it takes to get the RW Mutex, which is minimal.  So in summary, the service invokes the store with a blocking call that returns quickly, and given the API is not channel-based, it is not possible to select on both the context and a response form the server - to solve this would require a more sophisticated mechanism that seems beyond the scope of this project.  On the other hand, passing the context off to the store and asking it to not lock up if a context cancel occurs is a reasonable expectation.
