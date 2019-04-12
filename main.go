@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,24 +43,18 @@ func init() {
 func main() {
 	flag.Parse()
 
-	var lg *zap.Logger
-	var err error
-	if logLevel == "development" {
-		lg, err = zap.NewDevelopment()
-	} else {
-		lg, err = zap.NewProduction()
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating logger: %v", err)
-		os.Exit(1)
-	}
-	log := lg.Sugar() // ♫ ♩ ♩ ♫ ah honey honey
-
 	// We'll propagate the context with cancel thorughout the program,
 	// such as http clients, server methods we implement, and other
 	// loops using channels.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Set up logging.
+	log, err := initLogging()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating logger: %v", err)
+		os.Exit(1)
+	}
 
 	// Create the server to handle the produce service.  The API module will
 	// set up the routes, as we don't need to know the details in the
@@ -124,6 +119,28 @@ func loadSeedItems(ctx context.Context, service service.Service,
 	return err
 }
 
+// set up the logger, condsidering any env vars.
+func initLogging() (*zap.SugaredLogger, error) {
+	var lg *zap.Logger
+	var err error
+
+	pdl := strings.ToLower(os.Getenv("PRODUCE_LOG_LEVEL"))
+	if strings.HasPrefix(pdl, "d") {
+		logLevel = "development"
+	}
+
+	if logLevel == "development" {
+		lg, err = zap.NewDevelopment()
+	} else {
+		lg, err = zap.NewProduction()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return lg.Sugar(), nil // ♫ ♩ ♩ ♫ ah honey honey
+}
+
+// Setup for clean shutdown with signal handlers/cancel.
 func waitForShutdown(ctx context.Context, srv *http.Server,
 	log *zap.SugaredLogger) {
 	interruptChan := make(chan os.Signal, 1)

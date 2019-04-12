@@ -8,3 +8,5 @@ services:
     container_name: produce-demo
     ports:
       - '8080'
+    environment:
+      PRODUCE_LOG_LEVEL: 'production'

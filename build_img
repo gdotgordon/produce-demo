@@ -1,4 +1,6 @@
 #!/bin/bash
 TAG="1.0"
+set +e
 docker image rm gagordon12/produce-demo:${TAG}
+set -e
 docker build -t gagordon12/produce-demo:latest -t gagordon12/produce-demo:${TAG} .
