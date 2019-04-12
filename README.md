@@ -11,9 +11,9 @@ An add request containing multiple items handles each item in its own goroutine 
 As required by the spec, the database is initially seeded on startup by reading the four records from the seed.json file in the top-level directory of the repo.
 
 ## Accessing and running the demo
-The project is hosted at the Git repository https://github.com/gdotgordon/produce-demo.  The project uses a Travis-CI pipeline that runs go checks, unit tests, and a functional test.  To run the server, there is a `docker-compose.yml`file to launch it.
+The project uses a Travis-CI pipeline that runs go checks, unit tests, and a functional test.  To run the server, there is a `docker-compose.yml`file to launch it.  The project does not use modules to keep things simple, so clone this repo and set your GOPATH accordingly.
 
-- To start the server, run `docker-compose up` or `docker-compose up -d` to run in detached mode.  In the latter case, you can use a tool like *Kitematic* or use `docker logs` with the container name as such:
+- To start the server, with the GOPATH set, go to the top-level folder of this project, run `docker-compose up` or `docker-compose up -d` to run in detached mode.  In the latter case, you can use a tool like *Kitematic* or use `docker logs` with the container name as such:
 
 ```
 $ docker  container ls
@@ -31,10 +31,13 @@ Notice that running the above command (or better, `docker ps`) shows you the eph
 Note `docker-compose` will pull the image for you from Docker hub, but for reference, the version of the image to use is **gagordon12/produce-demo:1.0**.
 
 To summarize, here are the steps:
-1. `docker-compose up`
+1. `git clone https://github.com/gdotgordon/produce-demo.git` in the right place in your GOPATH (or you could `go get` it).
+1. `docker-compose up` from the "produce-demo" folder
 2. `docker ps` to find the ephemeral port to connect to the server, e.g "0.0.0.0:32874" means you can use "localhost:32874"
 3. Use a tool like Postman to invoke the endpoints.
-4. `docker-compose down`
+4. `docker-compose down`from the "produce-demo" folder
+
+If you want to build the image from scratch, there is a `build_img` bash script to run from produce-demo.
 
 ### Tests
 To run the unit tests, you don't need the container running, just run `go test -race ./...` from the top-level directory.
@@ -42,6 +45,8 @@ To run the unit tests, you don't need the container running, just run `go test -
 The tests are quite comprehensive, and I used the "table-driven" approach to writing tests where possible.
 
 There is also an integration test under *tests/integration* that focuses heavily on concurrent execution.  You can run that from the root directory by invoking: `go test -tags=integration -v -race -count=1 ./tests/integration`.  Note you should restart the server immediately before running the test, or else you'll get a warning about the database not being in the required state.  This test runs outside the container, and looks for the ephemeral port by searching for the container named "produce-demo".  If you've started the container through `docker-compose`, this should work fine.
+
+ The random produce item generator in the integration tests that I built was the part I had the most fun with!
 
 ## Key Items and Artifacts and How To Run the Produce Service
 
@@ -80,7 +85,7 @@ Three operations are supported, Add (one or more) produce, delete a produce item
 Note, there are also endpoints to check liveness (/v1/status) and clear the database (v1/reset).
 
 ### Add
-endpoint: POST to /v1/produce
+endpoint: **POST** to **/v1/produce**
 
 payload: JSON for a single Produce item as shown above, or an array of Produce items
 
@@ -91,7 +96,7 @@ HTTP return codes:
 - 409 (Conflict) if the item already exists in the database
 - 500 (Internal Server Error) typically won't happen unless there is a system failure
 
-The 200 status above merits further discussion.  A typical REST POST endpoint will create a single resource, but here, we're allowed to create multiple ones.  There are several solutions proposed to this in the literature, none of which is perfect, as this is arguably not a perfect REST use case.
+The 200 status above merits further discussion.  It is common for a REST POST endpoint to create a single resource, but here, we're allowed to create multiple ones.  There are several solutions proposed to this in the literature, none of which is perfect, so I went with one I could most justify.
 
 If a request with multiple payloads has all it's payloads uploaded successfully, then a 201 is returned.  But if one or more items fail, we return a 200 with an additional JSON payload sent that shows the individual results for each item, as per the codes listed above.  For example, consider this payload that yields to a response for a partially successful POST:
 
@@ -144,9 +149,10 @@ Note that two of the items are invalid (one bad code, one bad name, plus we've s
     },
 ]
 ```
+The 200 is acceptable here IMO, because the operation of processing the input was at least successful.  Again, there is more than one way to do this.
 
 ### List Items
-endpoint: GET to /v1/produce
+endpoint: **GET** to **/v1/produce**
 
 payload: none
 
@@ -189,7 +195,7 @@ Sample response:
 ```
 
 ### Delete Items
-endpoint: DELETE to /v1/produce/{produce code} example: /v1/produce/YRT6-72AS-K736-L4AR
+endpoint: **DELETE** to **/v1/produce/{produce code}** example: /v1/produce/YRT6-72AS-K736-L4AR
 
 payload: none
 
