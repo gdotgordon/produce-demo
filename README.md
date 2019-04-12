@@ -39,6 +39,8 @@ To summarize, here are the steps:
 
 If you want to build the image from scratch, there is a `build_img` bash script to run from produce-demo.
 
+Also, the project uses the Uber Zap logger.  This is configured to "production" log level by default, but may be set to "development" to see all the endpoints receiving their requests, by changing `PRODUCE_LOG_LEVEL: 'production'` to "development" in the docker-compose.yml.
+
 ### Tests
 To run the unit tests, you don't need the container running, just run `go test -race ./...` from the top-level directory.
 
@@ -209,6 +211,8 @@ Note: another approach would be to include the Produce code as a query parameter
 
 ## Architecture and Code Layout
 The code has a main package which starts the HTTP server.  This package creates a signal handler which is tied to a context cancel function.  This allows for clean shutdown.  The main code creates a *service* object, which is a wrapper around the store package, which is the mock database.  This service is then passed to the *api* layer, for use with the mux'ed incoming requests.
+
+As mentioned, Uber Zap logging is used.  In a real production product, I would have buried it in a logging interface.
 
 Here is a more-specific roadmap of the packages:
 
