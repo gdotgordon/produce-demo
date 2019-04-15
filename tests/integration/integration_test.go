@@ -98,9 +98,10 @@ func TestConcurrency(t *testing.T) {
 
 	var gotError uint32
 	var addCnt uint32
+	var delCnt uint32
 
 	// Fire off a goroutine that gets (lists) all the items and then sleeps,
-	// exiting either when it gets 0 items, or is cancelled.
+	// exiting either when all the items have been added and deleted.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -116,7 +117,8 @@ func TestConcurrency(t *testing.T) {
 				close(done)
 				return
 			}
-			if atomic.LoadUint32(&addCnt) == uint32(len(items)) {
+			if atomic.LoadUint32(&addCnt) == uint32(len(items)) &&
+				atomic.LoadUint32(&delCnt) == uint32(len(items)) {
 				close(done)
 				return
 			}
@@ -154,6 +156,7 @@ func TestConcurrency(t *testing.T) {
 
 				switch status {
 				case http.StatusNoContent:
+					atomic.AddUint32(&delCnt, 1)
 					return
 				case http.StatusNotFound:
 				default:
@@ -214,12 +217,15 @@ func TestConcurrency(t *testing.T) {
 	if int(addCnt) != itemCnt {
 		t.Fatal("item add count was", addCnt, "expected", itemCnt)
 	}
+	if int(delCnt) != itemCnt {
+		t.Fatal("item del count was", delCnt, "expected", itemCnt)
+	}
 }
 
 // Test concurrently adding items, ensure the returned list is correct.
 // Then concurrently delete the items, checking the codes and finally
 // that the list is empty.  Testing with both individual and batched add
-// produce requests are trsted.
+// produce requests are tested.
 func TestAddListDelete(t *testing.T) {
 	for c, v := range []struct {
 		numGood int // number of good items to add
@@ -312,8 +318,7 @@ func TestAddListDelete(t *testing.T) {
 				t.Fatalf("(%d) list items don't match: %+v, %+v", c, v, litems[i])
 			}
 		}
-		// Now delete the items, adding one of them twice, to generate a
-		// error return code. No content is the HTTP code on success, not
+		// Now delete the items.  No content is the HTTP code on success, not
 		// found on error.
 		var ncCnt uint32
 		var nfCnt uint32
